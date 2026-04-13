@@ -1,0 +1,33 @@
+{
+    "manifest_version": 3,
+    "name": "QA HUB Sync",
+    "version": "1.0",
+    "description": "Scrapes Redmine Specs and Defects and syncs with QA HUB Backend",
+    "permissions": [
+        "activeTab",
+        "storage",
+        "scripting"
+    ],
+    "host_permissions": [
+        "*://redmine.thundersoft.com/*",
+        "http://localhost:8000/*"
+    ],
+    "background": {
+        "service_worker": "background.js"
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "*://redmine.thundersoft.com/issues/*",
+                "*://redmine.thundersoft.com/projects/*/wiki/*"
+            ],
+            "js": [
+                "content.js"
+            ]
+        }
+    ],
+    "action": {
+        "default_popup": "popup.html",
+        "default_title": "QA HUB Sync"
+    }
+}

@@ -1,0 +1,121 @@
+/* Bối cảnh nền (Background Image) */
+.login-container {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    /* Hình nền logo Thundersoft đỏ đen mà bạn đã cung cấp */
+    /* Lưu ý: Bạn cần lưu hình ảnh vào thư mục public/bg.jpg */
+    background-image: url('a:/QA_HUB/frontend/public/bg.png');
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+
+    /* Dự phòng màu xám tối nếu hình chưa load được */
+    background-color: #1a1a2e;
+}
+
+/* Hiệu ứng kính trong suốt (Glassmorphism) */
+.glass-panel {
+    background: rgba(255, 255, 255, 0.05);
+    /* Trắng siêu mờ */
+    backdrop-filter: blur(15px);
+    /* Làm mờ phần nền phía sau */
+    -webkit-backdrop-filter: blur(15px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    /* Viền mờ mờ tạo cảm giác 3D của kính */
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+    /* Đổ bóng nhẹ phân tách với nền */
+
+    border-radius: 16px;
+    padding: 3rem 2.5rem;
+    width: 100%;
+    max-width: 400px;
+    color: #ffffff;
+    text-align: center;
+}
+
+.login-title {
+    font-size: 2rem;
+    font-weight: bold;
+    margin-top: 0;
+    margin-bottom: 0.5rem;
+    letter-spacing: 2px;
+}
+
+.login-subtitle {
+    font-size: 0.9rem;
+    color: rgba(255, 255, 255, 0.7);
+    margin-bottom: 2rem;
+}
+
+.login-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.input-group {
+    display: flex;
+    flex-direction: column;
+    text-align: left;
+    gap: 0.5rem;
+}
+
+.input-group label {
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.8);
+    font-weight: 500;
+}
+
+.input-group input {
+    width: 100%;
+    padding: 0.8rem 1rem;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(0, 0, 0, 0.2);
+    /* Ô text cũng mờ ảo */
+    color: white;
+    font-size: 1rem;
+    outline: none;
+    transition: border 0.3s ease;
+}
+
+.input-group input::placeholder {
+    color: rgba(255, 255, 255, 0.3);
+}
+
+.input-group input:focus {
+    border-color: rgba(255, 255, 255, 0.6);
+    background: rgba(0, 0, 0, 0.4);
+}
+
+.login-button {
+    background: linear-gradient(135deg, #e74c3c, #c0392b);
+    /* Tông màu đỏ đen của logo hãng */
+    color: white;
+    border: none;
+    padding: 0.8rem;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: bold;
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+    margin-top: 0.5rem;
+}
+
+.login-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(231, 76, 60, 0.4);
+}
+
+.error-message {
+    background: rgba(231, 76, 60, 0.2);
+    border: 1px solid rgba(231, 76, 60, 0.5);
+    color: #ff7675;
+    padding: 0.8rem;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+    font-size: 0.9rem;
+}

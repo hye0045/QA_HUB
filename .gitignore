@@ -1,0 +1,24 @@
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.*
+frontend/*.local
+
+# Backend
+backend/__pycache__/
+backend/.env
+backend/venv/
+backend/env/
+*.pyc
+
+# Sync Script
+sync_script/__pycache__/
+sync_script/last_sync.txt
+sync_script/.env
+sync_script/venv/
+sync_script/env/
+
+# OS Files
+.DS_Store
+Thumbs.db
