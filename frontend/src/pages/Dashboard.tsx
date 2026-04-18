@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { supabase } from '../lib/supabase';
-import axios from 'axios';
+import api from '../lib/api';
 import { Link } from 'react-router-dom';
 
 const Dashboard: React.FC = () => {
@@ -12,25 +11,17 @@ const Dashboard: React.FC = () => {
     useEffect(() => {
         const initData = async () => {
             try {
-                const { data: { session } } = await supabase.auth.getSession();
-                if (!session) return;
+                const token = localStorage.getItem('token');
+                if (!token) return;
 
-                // Fetch User Role Mapping
-                const { data: userRecord } = await supabase
-                    .from('users')
-                    .select('role, is_mentor')
-                    .eq('id', session.user.id)
-                    .single();
-
-                if (userRecord) setRoleInfo(userRecord);
+                // Load User Role Mapping from LocalStorage
+                const role = localStorage.getItem('role') || 'intern';
+                setRoleInfo({ role, is_mentor: role === 'qa_lead' || role === 'admin' });
 
                 // Fetch Data from Backend
-                const token = session.access_token;
-                const config = { headers: { Authorization: `Bearer ${token}` } };
-
                 const [defRes, specRes] = await Promise.all([
-                    axios.get('http://localhost:8000/api/defects/', config),
-                    axios.get('http://localhost:8000/api/specs/', config)
+                    api.get('/defects/'),
+                    api.get('/specs/')
                 ]);
 
                 setDefects(defRes.data);

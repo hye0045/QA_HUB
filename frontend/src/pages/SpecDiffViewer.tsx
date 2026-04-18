@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import axios from 'axios';
+import api from '../lib/api';
 
 const SpecDiffViewer: React.FC = () => {
     const [specId, setSpecId] = useState('');
@@ -12,7 +12,7 @@ const SpecDiffViewer: React.FC = () => {
         setLoading(true);
         try {
             // Endpoint created earlier GET /api/specs/:id/diff?v1=&v2=
-            const res = await axios.get(`http://localhost:8000/api/specs/${specId}/diff?v1=${v1}&v2=${v2}`);
+            const res = await api.get(`/specs/${specId}/diff?v1=${v1}&v2=${v2}`);
             setDiff(res.data.diff);
         } catch (err) {
             console.error(err);

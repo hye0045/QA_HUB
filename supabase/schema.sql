@@ -1,6 +1,7 @@
 -- Enable required extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "vector";
+-- Tạm thời comment pgvector vì chúng ta sẽ xử lý AI nhúng ở Phase 3 bằng Local Python 
+-- CREATE EXTENSION IF NOT EXISTS "vector";
 
 -- Create Enums
 CREATE TYPE user_role AS ENUM ('intern', 'tester', 'qa_lead', 'admin');
@@ -8,13 +9,14 @@ CREATE TYPE doc_status AS ENUM ('draft', 'mentor_reviewed', 'approved', 'locked'
 CREATE TYPE intern_status AS ENUM ('in_progress', 'ready');
 CREATE TYPE chat_mode AS ENUM ('qa', 'translate', 'suggest');
 
--- 1. Users Table (Extending Supabase auth.users)
+-- 1. Users Table (Independent of Supabase)
 CREATE TABLE public.users (
-    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     role user_role NOT NULL DEFAULT 'intern',
     is_mentor BOOLEAN NOT NULL DEFAULT FALSE,
-    email TEXT UNIQUE,
-    full_name TEXT,
+    email TEXT UNIQUE NOT NULL,
+    full_name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -43,7 +45,7 @@ CREATE TABLE public.spec_version (
     specification_id UUID REFERENCES public.specification(id) ON DELETE CASCADE,
     version_number INT NOT NULL,
     content TEXT NOT NULL,
-    embedding vector(1536), -- 1536 for OpenAI / 1024 or 768 for other models depending on AI service
+    embedding JSONB, -- Sử dụng JSONB để tạm lưu vector array thay vì dùng trực tiếp pgvector ở Database
     created_by UUID REFERENCES public.users(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -56,7 +58,7 @@ CREATE TABLE public.testcase (
     steps TEXT,
     expected_result TEXT,
     is_affected BOOLEAN NOT NULL DEFAULT FALSE,
-    embedding vector(1536),
+    embedding JSONB,
     created_by UUID REFERENCES public.users(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -146,83 +148,3 @@ CREATE TABLE public.audit_log (
     reason TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
--- ==========================================
--- ROW LEVEL SECURITY (RLS) POLICIES
--- ==========================================
-
--- Enable RLS on all tables
-ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.delegation ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.specification ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.spec_version ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.testcase ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.testcase_spec_link ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.defect ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.defect_history ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.delivery_document ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.delivery_version ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.chat_history ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.intern_training ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.access_log ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.audit_log ENABLE ROW LEVEL SECURITY;
-
-
--- Utility wrapper for auth user id
-CREATE OR REPLACE FUNCTION public.current_user_id()
-RETURNS UUID AS $$
-  SELECT auth.uid()
-$$ LANGUAGE sql STABLE;
-
-
--- 1. Users RLS
--- Users can view their own profile. Admins and QA Leads can view all.
-CREATE POLICY "Users can view all users" ON public.users FOR SELECT USING (true);
-CREATE POLICY "Users can update own profile" ON public.users FOR UPDATE USING (id = current_user_id());
-
--- 2. DeliveryDocument RLS
--- Admins/QA Leads can do anything.
-CREATE POLICY "Admins and Leads see all delivery docs" ON public.delivery_document
-    FOR ALL
-    USING (
-        EXISTS (
-            SELECT 1 FROM public.users u WHERE u.id = current_user_id() AND u.role IN ('admin', 'qa_lead')
-        )
-    );
-
--- Mentors see docs where they are assigned.
-CREATE POLICY "Mentors can see assigned delivery docs" ON public.delivery_document
-    FOR SELECT
-    USING (mentor_id = current_user_id());
-
--- Creators (Interns/Testers) can view and edit their own docs UNLESS it is locked.
-CREATE POLICY "Creators can view their unlocked docs" ON public.delivery_document
-    FOR SELECT
-    USING (created_by = current_user_id());
-
--- We will handle document lock updates and strict state machine via FastAPI Backend logic.
--- So we allow basic access here but backend enforces strict transitions and locks.
-
--- 3. Specifications & Testcases
--- Generally readable by authenticated users in the intranet.
-CREATE POLICY "All authenticated users can view specs" ON public.specification FOR SELECT USING (auth.uid() IS NOT NULL);
-CREATE POLICY "All authenticated users can view testcases" ON public.testcase FOR SELECT USING (auth.uid() IS NOT NULL);
-
--- Inserts/Updates to Specs/Testcases are restricted by Backend mostly, but we can set up basic RLS
-CREATE POLICY "Testers, Leads, Admins can create/edit testcases" ON public.testcase
-    FOR ALL
-    USING (
-        EXISTS (
-            SELECT 1 FROM public.users u WHERE u.id = current_user_id() AND u.role IN ('tester', 'qa_lead', 'admin')
-        )
-    );
-
--- 4. Chat History
--- Users can only see their own chat history.
-CREATE POLICY "Users view own chat history" ON public.chat_history FOR SELECT USING (user_id = current_user_id());
-CREATE POLICY "Users create own chat history" ON public.chat_history FOR INSERT WITH CHECK (user_id = current_user_id());
-
--- Note: In a real Supabase environment with FastAPI, the FastAPI Service Role Key bypasses RLS,
--- OR FastAPI issues JWTs representing the user, and the RLS works smoothly.
--- For QA HUB, we enforce rate limiting and business logic on FastAPI side using a Service Role client to read/write,
--- and potentially evaluate policies via auth middlewares.

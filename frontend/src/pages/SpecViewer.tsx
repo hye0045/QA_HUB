@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import axios from 'axios';
-import { supabase } from '../lib/supabase';
+import api from '../lib/api';
 
 const SpecViewer: React.FC = () => {
     const { id } = useParams<{ id: string }>();
@@ -13,15 +12,8 @@ const SpecViewer: React.FC = () => {
     useEffect(() => {
         const fetchSpec = async () => {
             try {
-                const { data: { session } } = await supabase.auth.getSession();
-                if (!session) return;
-
-                // Fetch specific spec config details (Assuming listed via specs API)
-                const config = { headers: { Authorization: `Bearer ${session.access_token}` } };
-                const res = await axios.get(`http://localhost:8000/api/specs/`, config);
-
+                const res = await api.get(`/specs/`);
                 // Filter out the requested Spec because `/specs/` returns all
-                // In a real app, create a `GET /specs/{id}` endpoint. For now filtering frontend is okay for POC
                 const target = res.data.find((s: any) => s.id === id);
                 setSpec(target);
             } catch (err) {
@@ -39,16 +31,13 @@ const SpecViewer: React.FC = () => {
         setTranslatedText('AI đang dịch tài liệu...');
 
         try {
-            const { data: { session } } = await supabase.auth.getSession();
-            const config = { headers: { Authorization: `Bearer ${session?.access_token}` } };
-
             const payload = {
                 mode: 'translate',
                 prompt: spec.content,
                 target_lang: targetLang
             };
 
-            const res = await axios.post('http://localhost:8000/api/chat', payload, config);
+            const res = await api.post('/chat', payload);
             setTranslatedText(res.data.response);
         } catch (err) {
             setTranslatedText('Lỗi dịch vụ dịch thuật.');

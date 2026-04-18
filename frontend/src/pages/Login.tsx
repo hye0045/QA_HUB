@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { supabase } from '../lib/supabase';
+import api from '../lib/api';
 import { useNavigate } from 'react-router-dom';
 import './Login.css';
 
@@ -16,17 +16,23 @@ const Login: React.FC = () => {
         setError(null);
 
         try {
-            const { data, error } = await supabase.auth.signInWithPassword({
-                email,
-                password,
+            const params = new URLSearchParams();
+            params.append('username', email); // FastAPI OAuth2 format requires 'username'
+            params.append('password', password);
+            
+            const res = await api.post('/auth/login', params, {
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
             });
 
-            if (error) throw error;
-            if (data.user) {
-                navigate('/dashboard');
+            if (res.data.access_token) {
+                localStorage.setItem('token', res.data.access_token);
+                localStorage.setItem('role', res.data.role);
+                localStorage.setItem('email', email);
+                // Trigger a full reload to sync state in App.tsx easily
+                window.location.href = '/';
             }
         } catch (err: any) {
-            setError(err.message || 'Đăng nhập thất bại. Vui lòng kiểm tra lại.');
+            setError(err.response?.data?.detail || 'Đăng nhập thất bại. Vui lòng kiểm tra lại.');
         } finally {
             setLoading(false);
         }

@@ -1,8 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from sqlalchemy import update
 from pydantic import BaseModel
 import difflib
+import uuid
+
 from core.security import get_current_user
-from db.supabase_client import supabase
+from db.database import get_db
+from db.models import Specification, SpecVersion, Testcase, testcase_spec_link
 
 router = APIRouter(prefix="/specs", tags=["Specifications"])
 
@@ -13,67 +19,121 @@ class SpecSync(BaseModel):
     version_number: int
 
 @router.get("/")
-def list_specs(current_user: dict = Depends(get_current_user)):
-    # Fetch all specs and their latest version content
-    specs_res = supabase.table("specification").select("id, title, language, created_at").execute()
-    data = specs_res.data
+async def list_specs(
+    db: AsyncSession = Depends(get_db), 
+    current_user: dict = Depends(get_current_user)
+):
+    result = await db.execute(select(Specification))
+    specs = result.scalars().all()
     
-    # We will fetch latest versions for simplicity
-    for s in data:
-        ver = supabase.table("spec_version").select("version_number, content").eq("specification_id", s['id']).order("version_number", desc=True).limit(1).execute()
-        if ver.data:
-            s['latest_version'] = ver.data[0]['version_number']
-            s['content'] = ver.data[0]['content']
-        else:
-            s['latest_version'] = 0
-            s['content'] = ""
+    data = []
+    # Fetch latest version for each spec
+    for s in specs:
+        ver_res = await db.execute(
+            select(SpecVersion)
+            .where(SpecVersion.specification_id == s.id)
+            .order_by(SpecVersion.version_number.desc())
+            .limit(1)
+        )
+        ver = ver_res.scalars().first()
+        data.append({
+            "id": str(s.id),
+            "title": s.title,
+            "language": s.language,
+            "latest_version": ver.version_number if ver else 0,
+            "content": ver.content if ver else ""
+        })
 
     return data
 
 @router.post("/sync")
-def sync_spec(spec: SpecSync, current_user: dict = Depends(get_current_user)):
-    # Look for existing spec by title
-    existing_spec = supabase.table("specification").select("*").eq("title", spec.title).execute()
+async def sync_spec(
+    spec: SpecSync, 
+    db: AsyncSession = Depends(get_db), 
+    current_user: dict = Depends(get_current_user)
+):
+    # Find existing
+    result = await db.execute(select(Specification).where(Specification.title == spec.title))
+    existing_spec = result.scalars().first()
     
-    if existing_spec.data:
-        spec_id = existing_spec.data[0]['id']
+    if existing_spec:
+        spec_id = existing_spec.id
     else:
-        new_spec = supabase.table("specification").insert({
-            "title": spec.title,
-            "language": spec.language,
-            "created_by": current_user['id']
-        }).execute()
-        spec_id = new_spec.data[0]['id']
+        new_spec = Specification(
+            title=spec.title,
+            language=spec.language,
+            created_by=uuid.UUID(current_user['id'])
+        )
+        db.add(new_spec)
+        await db.commit()
+        await db.refresh(new_spec)
+        spec_id = new_spec.id
         
-    # Check if this version exists
-    existing_version = supabase.table("spec_version").select("*").eq("specification_id", spec_id).eq("version_number", spec.version_number).execute()
-    if existing_version.data:
-        return {"message": "Version already exists", "spec_id": spec_id}
+    # Check if version exists
+    ver_res = await db.execute(select(SpecVersion).where(
+        SpecVersion.specification_id == spec_id, 
+        SpecVersion.version_number == spec.version_number
+    ))
+    if ver_res.scalars().first():
+        return {"message": "Version already exists", "spec_id": str(spec_id)}
+
+    # Phase 2 Trigger Logic: Update affects Testcases
+    # Find linked testcases
+    linked_tcs_res = await db.execute(
+        select(testcase_spec_link.c.testcase_id)
+        .where(testcase_spec_link.c.specification_id == spec_id)
+    )
+    linked_tc_ids = [row[0] for row in linked_tcs_res.all()]
+    
+    if linked_tc_ids:
+        await db.execute(
+            update(Testcase)
+            .where(Testcase.id.in_(linked_tc_ids))
+            .values(is_affected=True)
+        )
+
+    from services.ai_service import get_embedding
+    embedding_vector = get_embedding(spec.content)
 
     # Insert new version
-    supabase.table("spec_version").insert({
-        "specification_id": spec_id,
-        "version_number": spec.version_number,
-        "content": spec.content,
-        "created_by": current_user['id']
-        # Note: Embedding is handled asynchronously or here if Groq/OpenAI is called immediately
-    }).execute()
+    new_version = SpecVersion(
+        specification_id=spec_id,
+        version_number=spec.version_number,
+        content=spec.content,
+        embedding=embedding_vector if embedding_vector else None,
+        created_by=uuid.UUID(current_user['id'])
+    )
+    db.add(new_version)
+    await db.commit()
     
-    return {"message": "Spec synced successfully", "spec_id": spec_id}
+    return {"message": "Spec synced successfully and trigger executed", "spec_id": str(spec_id)}
 
 @router.get("/{spec_id}/diff")
-def spec_diff(spec_id: str, v1: int, v2: int, current_user: dict = Depends(get_current_user)):
-    # Fetch both versions
-    ver1 = supabase.table("spec_version").select("content").eq("specification_id", spec_id).eq("version_number", v1).single().execute()
-    ver2 = supabase.table("spec_version").select("content").eq("specification_id", spec_id).eq("version_number", v2).single().execute()
+async def spec_diff(
+    spec_id: str, 
+    v1: int, 
+    v2: int, 
+    db: AsyncSession = Depends(get_db), 
+    current_user: dict = Depends(get_current_user)
+):
+    ver1_res = await db.execute(select(SpecVersion).where(
+        SpecVersion.specification_id == uuid.UUID(spec_id), 
+        SpecVersion.version_number == v1
+    ))
+    ver1 = ver1_res.scalars().first()
     
-    if not ver1.data or not ver2.data:
+    ver2_res = await db.execute(select(SpecVersion).where(
+        SpecVersion.specification_id == uuid.UUID(spec_id), 
+        SpecVersion.version_number == v2
+    ))
+    ver2 = ver2_res.scalars().first()
+    
+    if not ver1 or not ver2:
         raise HTTPException(status_code=404, detail="One or both versions not found")
         
-    text1 = ver1.data['content'].splitlines(keepends=True)
-    text2 = ver2.data['content'].splitlines(keepends=True)
+    text1 = ver1.content.splitlines(keepends=True)
+    text2 = ver2.content.splitlines(keepends=True)
     
-    # Generate unified diff
     diff = list(difflib.unified_diff(text1, text2, fromfile=f'v{v1}', tofile=f'v{v2}'))
     
     return {"diff": "".join(diff)}

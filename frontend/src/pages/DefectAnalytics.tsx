@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import axios from 'axios';
+import api from '../lib/api';
 import { Chart as ChartJS, ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement } from 'chart.js';
 import { Pie, Bar } from 'react-chartjs-2';
 
@@ -11,7 +11,7 @@ const DefectAnalytics: React.FC = () => {
     useEffect(() => {
         const fetchAnalytics = async () => {
             try {
-                const res = await axios.get('http://localhost:8000/api/defects/analytics');
+                const res = await api.get('/defects/analytics');
                 setAnalytics(res.data);
             } catch (err) {
                 console.error(err);

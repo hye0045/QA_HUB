@@ -1,8 +1,14 @@
 fastapi
 uvicorn
-supabase
 pydantic
 pydantic-settings
 python-dotenv
 groq
 httpx
+sqlalchemy
+asyncpg
+passlib[bcrypt]
+python-jose[cryptography]
+python-multipart
+sentence-transformers
+numpy

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import axios from 'axios';
+import api from '../lib/api';
 
 const ChatbotUI: React.FC = () => {
     const [isOpen, setIsOpen] = useState(false);
@@ -17,7 +17,7 @@ const ChatbotUI: React.FC = () => {
         setLoading(true);
 
         try {
-            const res = await axios.post('http://localhost:8000/api/chat', {
+            const res = await api.post('/chat', {
                 mode,
                 prompt: currentInput,
                 source_lang: mode === 'translate' ? 'Japanese' : undefined,

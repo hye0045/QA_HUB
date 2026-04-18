@@ -1,79 +1,123 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 from pydantic import BaseModel
-from core.security import get_current_user, require_tester, require_qa_lead
-from db.supabase_client import supabase
+import uuid
 
-router = APIRouter(prefix="/delivery", tags=["DeliveryDocuments"])
+from core.security import get_current_user
+from db.database import get_db
+from db.models import DeliveryDocument, DocStatus, UserRole
+
+router = APIRouter(prefix="/delivery", tags=["Delivery Workflow"])
 
 class DeliveryCreate(BaseModel):
     title: str
-    content: str
-    mentor_id: str = None
 
-class ActionReason(BaseModel):
-    reason: str
+@router.get("/")
+async def list_deliveries(
+    db: AsyncSession = Depends(get_db), 
+    current_user: dict = Depends(get_current_user)
+):
+    result = await db.execute(select(DeliveryDocument))
+    return result.scalars().all()
 
 @router.post("/")
-def create_draft(doc: DeliveryCreate, current_user: dict = Depends(get_current_user)):
-    user_id = current_user['id']
-    role = current_user['role']
-    
-    if role == 'intern' and not doc.mentor_id:
-        raise HTTPException(status_code=400, detail="Interns must provide a mentor_id")
-        
-    inserted = supabase.table("delivery_document").insert({
-        "title": doc.title,
-        "status": "draft",
-        "created_by": user_id,
-        "mentor_id": doc.mentor_id
-    }).execute()
-    
-    doc_id = inserted.data[0]['id']
-    
-    supabase.table("delivery_version").insert({
-        "delivery_document_id": doc_id,
-        "content": doc.content,
-        "created_by": user_id
-    }).execute()
-    
-    return inserted.data[0]
+async def create_delivery(
+    doc: DeliveryCreate, 
+    db: AsyncSession = Depends(get_db), 
+    current_user: dict = Depends(get_current_user)
+):
+    new_doc = DeliveryDocument(
+        title=doc.title,
+        status=DocStatus.draft,
+        created_by=uuid.UUID(current_user['id'])
+    )
+    db.add(new_doc)
+    await db.commit()
+    await db.refresh(new_doc)
+    return {"message": "Document drafted", "id": new_doc.id}
 
-@router.put("/{doc_id}/approve")
-def approve_doc(doc_id: str, current_user: dict = Depends(get_current_user)):
-    # Must be mentor, QA lead, or admin
-    doc = supabase.table("delivery_document").select("*").eq("id", doc_id).single().execute()
-    if not doc.data:
+@router.post("/{doc_id}/submit_to_mentor")
+async def submit_to_mentor(
+    doc_id: str, 
+    db: AsyncSession = Depends(get_db), 
+    current_user: dict = Depends(get_current_user)
+):
+    result = await db.execute(select(DeliveryDocument).where(DeliveryDocument.id == uuid.UUID(doc_id)))
+    doc = result.scalars().first()
+    
+    if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
         
-    user_id = current_user['id']
-    d = doc.data
-    
-    if current_user['role'] == 'intern':
-         raise HTTPException(status_code=403, detail="Interns cannot approve")
-         
-    if d['status'] == 'locked':
-         raise HTTPException(status_code=status.HTTP_423_LOCKED, detail="Document is locked")
-         
-    # Update status
-    new_status = 'approved'
-    if current_user['role'] == 'tester' and d['mentor_id'] == user_id:
-        new_status = 'mentor_reviewed' # Step 1 of approval
+    if doc.status != DocStatus.draft:
+        raise HTTPException(status_code=400, detail="Only draft documents can be submitted to Mentor")
         
-    supabase.table("delivery_document").update({"status": new_status}).eq("id", doc_id).execute()
-    return {"message": "Document updated", "new_status": new_status}
+    if not doc.mentor_id:
+        raise HTTPException(status_code=400, detail="This document does not have an assigned mentor. Please assign a mentor first.")
+        
+    doc.status = DocStatus.pending_mentor
+    await db.commit()
+    return {"message": "Document submitted to mentor", "status": doc.status.value}
 
-@router.put("/{doc_id}/lock")
-def lock_doc(doc_id: str, payload: ActionReason, current_user: dict = Depends(require_qa_lead)):
-    # Lock document (HTTP 423 enforcement on edits)
-    supabase.table("delivery_document").update({"status": "locked"}).eq("id", doc_id).execute()
+@router.post("/{doc_id}/approve_mentor")
+async def approve_by_mentor(
+    doc_id: str, 
+    db: AsyncSession = Depends(get_db), 
+    current_user: dict = Depends(get_current_user)
+):
+    result = await db.execute(select(DeliveryDocument).where(DeliveryDocument.id == uuid.UUID(doc_id)))
+    doc = result.scalars().first()
     
-    # Audit trail
-    supabase.table("audit_log").insert({
-        "user_id": current_user['id'],
-        "action": "lock",
-        "entity_type": "delivery_document",
-        "entity_id": doc_id,
-        "reason": payload.reason
-    }).execute()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+        
+    if doc.status != DocStatus.pending_mentor:
+        raise HTTPException(status_code=400, detail="Document is not pending mentor approval")
+        
+    if not current_user['is_mentor']:
+        raise HTTPException(status_code=403, detail="Only Mentors can approve this stage")
+        
+    doc.status = DocStatus.pending_qa_lead
+    await db.commit()
+    return {"message": "Document approved by mentor and forwarded to QA Lead", "status": doc.status.value}
+
+@router.post("/{doc_id}/approve_lead")
+async def approve_by_lead(
+    doc_id: str, 
+    db: AsyncSession = Depends(get_db), 
+    current_user: dict = Depends(get_current_user)
+):
+    result = await db.execute(select(DeliveryDocument).where(DeliveryDocument.id == uuid.UUID(doc_id)))
+    doc = result.scalars().first()
     
-    return {"message": "Document locked"}
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+        
+    if doc.status != DocStatus.pending_qa_lead:
+        raise HTTPException(status_code=400, detail="Document is not pending QA Lead approval")
+        
+    if current_user['role'] not in [UserRole.qa_lead.value, UserRole.admin.value]:
+        raise HTTPException(status_code=403, detail="Only QA Leads or Admins can lock documents")
+        
+    doc.status = DocStatus.locked
+    await db.commit()
+    return {"message": "Document Approved and Locked", "status": doc.status.value}
+
+@router.post("/{doc_id}/reject")
+async def reject_document(
+    doc_id: str, 
+    db: AsyncSession = Depends(get_db), 
+    current_user: dict = Depends(get_current_user)
+):
+    result = await db.execute(select(DeliveryDocument).where(DeliveryDocument.id == uuid.UUID(doc_id)))
+    doc = result.scalars().first()
+    
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+        
+    if doc.status == DocStatus.locked:
+        raise HTTPException(status_code=400, detail="Cannot reject a locked document")
+        
+    doc.status = DocStatus.draft
+    await db.commit()
+    return {"message": "Document rejected and returned to draft", "status": doc.status.value}

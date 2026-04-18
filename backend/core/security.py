@@ -1,32 +1,67 @@
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from db.supabase_client import supabase
+from fastapi.security import OAuth2PasswordBearer
 from typing import Dict, Any, List
+from datetime import datetime, timedelta
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 
-security = HTTPBearer()
+from core.config import settings
+from db.database import get_db
+from db.models import User
 
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Dict[str, Any]:
-    token = credentials.credentials
+# Password hashing
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# OAuth2 scheme
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+def get_password_hash(password):
+    return pwd_context.hash(password)
+
+def create_access_token(data: dict, expires_delta: timedelta | None = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    return encoded_jwt
+
+async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
     try:
-        # Verify JWT with Supabase Auth
-        user = supabase.auth.get_user(token)
-        if not user:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-        
-        # Get custom claims or fetch from public.users to get the role
-        # Here we query public.users table to get RBAC role
-        user_id = user.user.id
-        user_record = supabase.table('users').select('*').eq('id', user_id).single().execute()
-        
-        if not user_record.data:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found in system")
-            
-        return user_record.data
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Authentication failed: {str(e)}"
-        )
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    # Query public.users based on sub
+    result = await db.execute(select(User).where(User.id == user_id))
+    user_record = result.scalars().first()
+
+    if user_record is None:
+        raise credentials_exception
+
+    # Return dict compatibility for previously existing code
+    return {
+        "id": str(user_record.id),
+        "email": user_record.email,
+        "full_name": user_record.full_name,
+        "role": user_record.role.value,
+        "is_mentor": user_record.is_mentor
+    }
 
 def require_roles(allowed_roles: List[str]):
     def role_checker(current_user: Dict[str, Any] = Depends(get_current_user)):
@@ -38,7 +73,7 @@ def require_roles(allowed_roles: List[str]):
         return current_user
     return role_checker
 
-# Pre-defined dependencies
 require_admin = require_roles(["admin"])
 require_qa_lead = require_roles(["admin", "qa_lead"])
 require_tester = require_roles(["admin", "qa_lead", "tester"])
+

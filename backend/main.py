@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from core.config import settings
-from api import testcases, specs, defects, delivery, chat
+from api import testcases, specs, defects, delivery, chat, auth
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -22,9 +22,10 @@ app.add_middleware(
 def root():
     return {"message": "Welcome to QA HUB API"}
 
+app.include_router(auth.router, prefix="/api")
 app.include_router(testcases.router, prefix="/api")
 app.include_router(specs.router, prefix="/api")
 app.include_router(defects.router, prefix="/api")
 app.include_router(delivery.router, prefix="/api")
-app.include_router(chat.router, prefix="/api")
+app.include_router(chat.router, prefix="/api") 
 
