@@ -2,6 +2,9 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from typing import Dict, Any, List
 from datetime import datetime, timedelta
+import logging
+
+logger = logging.getLogger("qa_hub.security")
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -76,4 +79,41 @@ def require_roles(allowed_roles: List[str]):
 require_admin = require_roles(["admin"])
 require_qa_lead = require_roles(["admin", "qa_lead"])
 require_tester = require_roles(["admin", "qa_lead", "tester"])
+
+
+def require_mentor(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Chỉ cho phép user đã được đánh dấu is_mentor=True."""
+    if not current_user.get('is_mentor'):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Mentors can access this endpoint"
+        )
+    return current_user
+
+
+def require_final_approve_auth():
+    """QA Lead hoặc Tester đang có delegation hợp lệ mới được Final Approve."""
+    async def final_approve_checker(
+        current_user: Dict[str, Any] = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db)
+    ):
+        if current_user.get('role') in ['admin', 'qa_lead']:
+            return current_user
+
+        if current_user.get('role') == 'tester':
+            from db.models import RoleDelegation
+            res = await db.execute(
+                select(RoleDelegation).where(
+                    RoleDelegation.delegatee_id == current_user['id'],
+                    RoleDelegation.expires_at > datetime.utcnow()
+                )
+            )
+            if res.scalars().first():
+                return current_user
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have Final Approve authority."
+        )
+    return final_approve_checker
 

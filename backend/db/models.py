@@ -14,13 +14,14 @@ class UserRole(enum.Enum):
 
 class DocStatus(enum.Enum):
     draft = "draft"
-    pending_mentor = "pending_mentor" # New intermediate state from requirements
+    pending_mentor = "pending_mentor"
     pending_qa_lead = "pending_qa_lead"
     locked = "locked"
 
-class InternStatus(enum.Enum):
-    in_progress = "in_progress"
-    ready = "ready"
+class TestcaseStatus(enum.Enum):
+    draft = "draft"
+    active = "active"
+    deprecated = "deprecated"
 
 class ChatMode(enum.Enum):
     qa = "qa"
@@ -30,7 +31,7 @@ class ChatMode(enum.Enum):
 class User(Base):
     __tablename__ = "users"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    role = Column(Enum(UserRole), nullable=False, default=UserRole.intern)
+    role = Column(Enum(UserRole, name="user_role"), nullable=False, default=UserRole.intern)
     is_mentor = Column(Boolean, nullable=False, default=False)
     email = Column(String, unique=True, nullable=False)
     full_name = Column(String, nullable=False)
@@ -64,7 +65,7 @@ class Testcase(Base):
     description = Column(String)
     steps = Column(String)
     expected_result = Column(String)
-    status = Column(String, default="Draft") # New field from Phase 2
+    status = Column(Enum(TestcaseStatus, name="testcase_status"), nullable=False, default=TestcaseStatus.draft)
     model_id = Column(String) # New field
     test_type = Column(String) # New field
     precondition = Column(String) # New field
@@ -116,4 +117,15 @@ class MentorAssignment(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     mentor_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     intern_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True) # Assuming an intern only has 1 active mentor
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+class RoleDelegation(Base):
+    """
+    Quản lý ủy quyền (Delegation) tạm thời cho phép Tester được quyền "Final Approve" thay thế QA Lead vắng mặt.
+    """
+    __tablename__ = "role_delegation"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    delegator_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False) # MUST BE QA_LEAD
+    delegatee_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False) # MUST BE TESTER
+    expires_at = Column(DateTime, nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)

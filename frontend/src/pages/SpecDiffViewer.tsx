@@ -14,9 +14,9 @@ const SpecDiffViewer: React.FC = () => {
             // Endpoint created earlier GET /api/specs/:id/diff?v1=&v2=
             const res = await api.get(`/specs/${specId}/diff?v1=${v1}&v2=${v2}`);
             setDiff(res.data.diff);
-        } catch (err) {
-            console.error(err);
-            setDiff('Error fetching diff');
+        } catch (err: any) {
+            const errorMsg = err.response?.data?.detail || err.message || 'Unknown error occurred';
+            setDiff(`❌ Lỗi: ${errorMsg}`);
         } finally {
             setLoading(false);
         }

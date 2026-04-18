@@ -60,4 +60,11 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSessi
         data={"sub": str(user.id)}, expires_delta=access_token_expires
     )
     
-    return {"access_token": access_token, "token_type": "bearer", "role": user.role.value}
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "role": user.role.value,
+        "is_mentor": user.is_mentor,
+        "user_id": str(user.id),
+        "full_name": user.full_name,
+    }

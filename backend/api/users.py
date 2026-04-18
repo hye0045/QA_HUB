@@ -95,3 +95,75 @@ async def get_mentees(
             "role": m.role.value
         } for m in mentees
     ]
+
+# --- Admin Operations (CRUD Users) ---
+from db.models import RoleDelegation
+from core.security import require_admin
+
+class UserCreate(BaseModel):
+    email: str
+    full_name: str
+    password: str
+    role: str
+
+@router.get("/", dependencies=[Depends(require_admin)])
+async def get_all_users(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User))
+    users = result.scalars().all()
+    return [{"id": str(u.id), "email": u.email, "full_name": u.full_name, "role": u.role.value, "is_mentor": u.is_mentor} for u in users]
+
+@router.post("/", dependencies=[Depends(require_admin)])
+async def create_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
+    from core.security import get_password_hash
+    # Check if exists
+    res = await db.execute(select(User).where(User.email == user.email))
+    if res.scalars().first():
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    new_user = User(
+        email=user.email,
+        full_name=user.full_name,
+        role=UserRole(user.role),
+        password_hash=get_password_hash(user.password)
+    )
+    db.add(new_user)
+    await db.commit()
+    return {"message": "User created successfully"}
+
+@router.delete("/{user_id}", dependencies=[Depends(require_admin)])
+async def delete_user(user_id: str, db: AsyncSession = Depends(get_db)):
+    res = await db.execute(select(User).where(User.id == uuid.UUID(user_id)))
+    user = res.scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    await db.delete(user)
+    await db.commit()
+    return {"message": "User deleted"}
+
+# --- QA_LEAD Operations (Delegate) ---
+class DelegateRequest(BaseModel):
+    tester_id: str
+    duration_hours: int
+
+@router.post("/delegate", dependencies=[Depends(require_qa_lead)])
+async def create_delegation(req: DelegateRequest, db: AsyncSession = Depends(get_db), current_user: dict = Depends(get_current_user)):
+    from datetime import datetime, timedelta
+    
+    tester_id_uuid = uuid.UUID(req.tester_id)
+    
+    # Veryify tester
+    res = await db.execute(select(User).where(User.id == tester_id_uuid))
+    tester = res.scalars().first()
+    if not tester or tester.role != UserRole.tester:
+        raise HTTPException(status_code=400, detail="Target user is not a valid tester.")
+        
+    expires = datetime.utcnow() + timedelta(hours=req.duration_hours)
+    
+    delegation = RoleDelegation(
+        delegator_id=uuid.UUID(current_user["id"]),
+        delegatee_id=tester_id_uuid,
+        expires_at=expires
+    )
+    db.add(delegation)
+    await db.commit()
+    return {"message": f"Successfully delegated Final Approve to {tester.email} for {req.duration_hours} hours."}

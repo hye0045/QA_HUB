@@ -28,7 +28,9 @@ const Login: React.FC = () => {
                 localStorage.setItem('token', res.data.access_token);
                 localStorage.setItem('role', res.data.role);
                 localStorage.setItem('email', email);
-                // Trigger a full reload to sync state in App.tsx easily
+                localStorage.setItem('full_name', res.data.full_name || '');
+                localStorage.setItem('is_mentor', String(res.data.is_mentor ?? false));
+                localStorage.setItem('user_id', res.data.user_id || '');
                 window.location.href = '/';
             }
         } catch (err: any) {
