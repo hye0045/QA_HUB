@@ -18,11 +18,44 @@ class DefectSync(BaseModel):
     severity: str
     model_id: str = None
 
+from services.redmine_service import RedmineClient
+from core.config import settings
+
 @router.get("/")
 async def list_defects(
     db: AsyncSession = Depends(get_db), 
     current_user: dict = Depends(get_current_user)
 ):
+    # 1. Kéo dữ liệu tự động (Background Syncing) chạy trên mỗi Request
+    client = RedmineClient()
+    fresh_defects = await client.fetch_issues(settings.PROJECT_ID)
+    
+    if fresh_defects:
+        for d in fresh_defects:
+            result = await db.execute(select(Defect).where(Defect.redmine_id == d["redmine_id"]))
+            existing = result.scalars().first()
+            if existing:
+                # Upsert updating old fields
+                existing.title = d["title"]
+                existing.status = d["status"]
+                existing.severity = d["severity"]
+            else:
+                # Insert new defect
+                new_defect = Defect(
+                    redmine_id=d["redmine_id"],
+                    title=d["title"],
+                    status=d["status"],
+                    severity=d["severity"],
+                    model_id=d["model_id"]
+                )
+                db.add(new_defect)
+        
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+
+    # 2. Lấy dữ liệu ổn định từ Postgres trả về GUI
     result = await db.execute(select(Defect).order_by(Defect.redmine_id.desc()))
     return result.scalars().all()
 
@@ -81,8 +114,18 @@ async def get_analytics(
     )
     by_status = [{"status": row[0], "count": row[1]} for row in status_res.all()]
     
+    # [Mock] 4. Defect by Assignee (Giả lập do DB chưa có trường này từ Redmine)
+    import random
+    mock_assignees = [
+        {"name": "Trần Văn Intern", "count": random.randint(5, 15)},
+        {"name": "Lê Thị Tester", "count": random.randint(8, 20)},
+        {"name": "Nguyễn QA Lead", "count": random.randint(1, 5)},
+        {"name": "Unassigned", "count": random.randint(0, 3)}
+    ]
+    
     return {
         "total": total_defects,
         "by_model": by_model,
-        "by_status": by_status
+        "by_status": by_status,
+        "by_assignee": mock_assignees
     }

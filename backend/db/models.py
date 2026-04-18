@@ -107,3 +107,13 @@ class ChatHistory(Base):
     prompt = Column(String, nullable=False)
     response = Column(String, nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+class MentorAssignment(Base):
+    """
+    [UC_F2] Bảng lưu trữ liên kết giữa Mentor (QA Lead / Tester) và Intern.
+    """
+    __tablename__ = "mentor_assignments"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    mentor_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    intern_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True) # Assuming an intern only has 1 active mentor
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)

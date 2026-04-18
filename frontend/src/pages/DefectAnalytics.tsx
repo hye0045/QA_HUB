@@ -1,57 +1,97 @@
-import React, { useEffect, useState } from 'react';
-import api from '../lib/api';
+import React from 'react';
+import { useDefectsData } from '../lib/api';
 import { Chart as ChartJS, ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement } from 'chart.js';
-import { Pie, Bar } from 'react-chartjs-2';
+import { Doughnut, Bar } from 'react-chartjs-2';
 
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement);
 
 const DefectAnalytics: React.FC = () => {
-    const [analytics, setAnalytics] = useState<any>(null);
+    // [UC_G1] Sử dụng Hook để get data thay cho call thô
+    const { data: analytics, loading, error } = useDefectsData();
 
-    useEffect(() => {
-        const fetchAnalytics = async () => {
-            try {
-                const res = await api.get('/defects/analytics');
-                setAnalytics(res.data);
-            } catch (err) {
-                console.error(err);
-            }
-        };
-        fetchAnalytics();
-    }, []);
+    // 1. Error state
+    if (error) {
+        return (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '50vh', color: '#e74c3c' }}>
+                <h2>⚠️ Oops! Lỗi đồng bộ dữ liệu</h2>
+                <p>{error}</p>
+            </div>
+        );
+    }
 
-    if (!analytics) return <div>Loading Analytics...</div>;
+    // 2. Loading state
+    if (loading || !analytics) {
+        return (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '50vh' }}>
+                <div style={{ width: '40px', height: '40px', border: '4px solid #f3f3f3', borderTop: '4px solid #3498db', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+                <p style={{ marginTop: '1rem', color: '#7f8c8d' }}>Đang tải dữ liệu từ Redmine...</p>
+                <style>{`
+                    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+                `}</style>
+            </div>
+        );
+    }
 
+    // Prepare Doughnut Chart Data (By Status)
     const statusData = {
-        labels: Object.keys(analytics.by_status),
+        labels: analytics.by_status.map((item: any) => item.status.toUpperCase()),
         datasets: [{
-            data: Object.values(analytics.by_status),
+            data: analytics.by_status.map((item: any) => item.count),
             backgroundColor: ['#e74c3c', '#f1c40f', '#2ecc71', '#3498db', '#9b59b6'],
+            borderWidth: 0,
+            hoverOffset: 4
         }],
     };
 
-    const severityData = {
-        labels: Object.keys(analytics.by_severity),
+    const doughnutOptions = {
+        cutout: '70%',
+        plugins: {
+            legend: { position: 'bottom' as const }
+        }
+    };
+
+    // Prepare Bar Chart Data (By Assignee - Mock)
+    const assigneeData = {
+        labels: analytics.by_assignee.map((item: any) => item.name),
         datasets: [{
-            label: 'Defects by Severity',
-            data: Object.values(analytics.by_severity),
-            backgroundColor: '#e67e22',
+            label: 'Tổng số Lỗi (Defects)',
+            data: analytics.by_assignee.map((item: any) => item.count),
+            backgroundColor: '#3498db',
+            borderRadius: 6,
         }],
     };
 
     return (
         <div>
-            <h2>Defect Analytics Dashboard</h2>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem', marginTop: '2rem' }}>
-                <div style={{ background: 'white', padding: '1.5rem', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
-                    <h3>Defects by Status</h3>
-                    <div style={{ width: '300px', margin: '0 auto' }}>
-                        <Pie data={statusData} />
+            <h2 style={{ marginBottom: '0.5rem' }}>Đánh giá Hiệu năng QA (UC_G1)</h2>
+            <p style={{ color: '#7f8c8d', marginBottom: '2rem' }}>Tổng số lỗi toàn dự án: <strong>{analytics.total}</strong></p>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '2rem' }}>
+                {/* DOUGHNUT CHART */}
+                <div style={{ background: 'white', padding: '1.5rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
+                    <h3 style={{ borderBottom: '1px solid #ecf0f1', paddingBottom: '0.5rem', marginBottom: '1.5rem' }}>
+                        Trạng thái Defect
+                    </h3>
+                    <div style={{ position: 'relative', width: '100%', maxWidth: '300px', margin: '0 auto', aspectRatio: '1/1' }}>
+                        <Doughnut data={statusData} options={doughnutOptions} />
                     </div>
                 </div>
-                <div style={{ background: 'white', padding: '1.5rem', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
-                    <h3>Defects by Severity</h3>
-                    <Bar data={severityData} />
+
+                {/* BAR CHART */}
+                <div style={{ background: 'white', padding: '1.5rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
+                    <h3 style={{ borderBottom: '1px solid #ecf0f1', paddingBottom: '0.5rem', marginBottom: '1.5rem' }}>
+                        Năng suất theo Thành viên
+                    </h3>
+                    <div style={{ width: '100%' }}>
+                        <Bar 
+                            data={assigneeData} 
+                            options={{ 
+                                responsive: true, 
+                                plugins: { legend: { display: false } },
+                                scales: { y: { beginAtZero: true } }
+                            }} 
+                        />
+                    </div>
                 </div>
             </div>
         </div>
