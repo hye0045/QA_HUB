@@ -21,7 +21,11 @@ const Sidebar: React.FC = () => {
                 
                 {/* Dành chung cho mọi người làm testcase/spec */}
                 {(role === 'tester' || role === 'qa_lead' || role === 'admin') && (
-                    <Link to="/specs/diff" style={{ color: '#ecf0f1', textDecoration: 'none' }}>Spec Diff Viewer</Link>
+                    <>
+                        <Link to="/specs/new" style={{ color: '#ecf0f1', textDecoration: 'none' }}>+ Upload Specification</Link>
+                        <Link to="/specs/diff" style={{ color: '#ecf0f1', textDecoration: 'none' }}>Spec Diff Viewer</Link>
+                        <Link to="/testcases/generate" style={{ color: '#ecf0f1', textDecoration: 'none' }}>AI Testcase Generator</Link>
+                    </>
                 )}
 
                 {/* Dành riêng cho Analytics (QA Lead, Admin) */}

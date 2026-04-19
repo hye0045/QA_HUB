@@ -57,6 +57,18 @@ export interface Defect {
     severity: string;
     model_id: string | null;
     synced_at: string;
+    // AI fields
+    cleaned_description?: string;
+    bug_category?: string;
+    root_cause_guess?: string;
+    module?: string;
+}
+
+export interface DeviceModelProfile {
+    id: string;
+    name: string;
+    project_id: string;
+    tracker_id: number;
 }
 
 export interface DeliveryDoc {
@@ -78,6 +90,7 @@ export interface UserItem {
 export interface AnalyticsData {
     total: number;
     by_status: { status: string; count: number }[];
+    by_category: { category: string; count: number }[];
     by_model: { model: string; count: number }[];
     by_assignee: { name: string; count: number }[];
 }

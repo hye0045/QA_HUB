@@ -6,7 +6,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
 from core.config import settings
-from api import testcases, specs, defects, delivery, chat, auth, users
+from api import testcases, testcases_upload, specs, defects, delivery, chat, auth, users
 
 # -------------------------------------------------------------------
 # Logging setup
@@ -74,6 +74,7 @@ def root():
 app.include_router(auth.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(testcases.router, prefix="/api")
+app.include_router(testcases_upload.router, prefix="/api")
 app.include_router(specs.router, prefix="/api")
 app.include_router(defects.router, prefix="/api")
 app.include_router(delivery.router, prefix="/api")

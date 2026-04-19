@@ -211,3 +211,46 @@ async def suggest_testcase(
         "suggestion": suggestion,
         "similar_testcases": similar,
     }
+
+
+class GenerateTestcaseRequest(BaseModel):
+    spec_text: str
+    base_model: str
+
+@router.post("/generate")
+async def generate_testcases_from_spec_endpoint(
+    req: GenerateTestcaseRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """[AI] Tự động sinh hàng loạt Testcase từ tài liệu Spec kết hợp RAG model"""
+    from services.ai_service import generate_testcases_from_spec
+    
+    # Mock behavior: lấy 1-2 testcases mẫu từ base_model
+    # Trong thực tế: result = await db.execute(select(Testcase).where(Testcase.model_id == req.base_model).limit(2))
+    base_tcs = []
+    result = await db.execute(
+        select(Testcase)
+        .where(Testcase.status == "active")
+        .limit(2)
+    )
+    for tc in result.scalars().all():
+        base_tcs.append({
+            "title": tc.title,
+            "precondition": tc.precondition or "",
+            "steps": tc.steps or "",
+            "expected": tc.expected_result or ""
+        })
+
+    # Nếu không có mẫu, tạo 1 mẫu cứng làm base prompt
+    if not base_tcs:
+        base_tcs = [{
+            "title": "Kiểm tra màn hình hiển thị",
+            "precondition": "Thiết bị được bật nguồn.",
+            "steps": "1. Mở ứng dụng.\n2. Quan sát màn hình chính.",
+            "expected": "Màn hình chính hiển thị đầy đủ icon không bị vỡ layout."
+        }]
+
+    ai_response = await generate_testcases_from_spec(req.spec_text, base_tcs)
+    
+    return ai_response

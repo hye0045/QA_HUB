@@ -88,6 +88,13 @@ class Defect(Base):
     status = Column(String, nullable=False)
     severity = Column(String, nullable=False)
     model_id = Column(String)
+    
+    # --- AI Enriched Fields ---
+    cleaned_description = Column(String, nullable=True)
+    bug_category = Column(String, nullable=True)
+    root_cause_guess = Column(String, nullable=True)
+    module = Column(String, nullable=True)
+    
     synced_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
@@ -128,4 +135,15 @@ class RoleDelegation(Base):
     delegator_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False) # MUST BE QA_LEAD
     delegatee_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False) # MUST BE TESTER
     expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+class DeviceModelProfile(Base):
+    """
+    Quản lý linh hoạt nhiều dòng cấu hình (Dòng máy/Dự án) lấy data Redmine.
+    """
+    __tablename__ = "device_model_profiles"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, nullable=False, unique=True) # e.g., "iPhone 15 Pro Max"
+    project_id = Column(String, nullable=False) # Redmine Project ID (e.g. eb1242)
+    tracker_id = Column(Integer, nullable=False, default=38) # e.g. 38 for Bug
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)

@@ -9,7 +9,7 @@ class RedmineClient:
         self.base_url = settings.REDMINE_URL
         self.api_key = settings.REDMINE_API_KEY
     
-    async def fetch_issues(self, project_id: str):
+    async def fetch_issues(self, project_id: str, tracker_id: int = 38):
         """
         Asynchronously fetches open issues from Redmine for a specific project.
         """
@@ -17,7 +17,7 @@ class RedmineClient:
         
         params = {
             "project_id": project_id,
-            "tracker_id": 38,
+            "tracker_id": tracker_id,
             "status_id": "open",
             "sort": "id:desc",
             "limit": 100
@@ -41,6 +41,7 @@ class RedmineClient:
                     defects.append({
                         "redmine_id": issue["id"],
                         "title": issue.get("subject", "N/A"),
+                        "description": issue.get("description", ""),
                         "status": issue.get("status", {}).get("name", "new").lower(),
                         "severity": issue.get("priority", {}).get("name", "normal").lower(),
                         "model_id": "Kyocera Device" # Mặc định hoặc bóc từ log tùy ý

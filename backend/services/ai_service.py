@@ -80,3 +80,101 @@ def mask_sensitive_data(text: str) -> str:
     text = re.sub(secret_code_pattern, '[MASKED_CODE]', text)
     
     return text
+
+# 4. Groq LLM Integrations
+from groq import AsyncGroq
+import json
+import logging
+from core.config import settings
+
+logger = logging.getLogger("qa_hub.ai_service")
+
+async def clean_and_classify_bug(bug_subject: str, bug_description: str) -> dict:
+    """
+    Sử dụng Groq AI để làm sạch mô tả Bug và phân loại thành JSON.
+    """
+    if not settings.GROQ_API_KEY:
+        logger.warning("[AI Service] GROQ_API_KEY missing. Returning mock classification.")
+        return {
+            "cleaned_description": f"[{bug_subject}] {bug_description[:50]}...",
+            "bug_category": "Uncategorized",
+            "root_cause_guess": "N/A",
+            "module": "General"
+        }
+    
+    client = AsyncGroq(api_key=settings.GROQ_API_KEY)
+    masked_desc = mask_sensitive_data(bug_description)
+    masked_subj = mask_sensitive_data(bug_subject)
+    
+    prompt = f"""Bạn là chuyên gia QA. Đọc Bug thô, làm sạch text, tóm tắt và phân loại lỗi.
+Bug Subject: {masked_subj}
+Bug Description: {masked_desc}
+
+YÊU CẦU:
+1. `cleaned_description`: Viết lại Description gọn gàng, chia bullet point, lịch sự, chuẩn mực QA (loại bỏ cảm xúc, phàn nàn của Tester). BẮT BUỘC KHÔNG VIẾT CHỮ "N/A" hay để trống, hãy sáng tạo lại nội dung thành các bước chuyên nghiệp: "Steps to reproduce", "Actual result", "Expected result".
+2. `bug_category`: Chọn chuẩn xác 1 trong: 'UI', 'Logic', 'Crash', 'Performance', 'Security', 'Hardware', 'Other'.
+3. `root_cause_guess`: Dự đoán nguyên nhân kỹ thuật dưới góc độ Coder.
+4. `module`: Tên chức năng/khu vực code có thể dính lỗi.
+
+Trả về ĐÚNG định dạng JSON sau (không kèm text thừa):
+{{"cleaned_description": "mo ta ngan gon...", "bug_category": "UI/Logic/Crash...", "root_cause_guess": "du doan nguyen nhan...", "module": "ten module..."}}"""
+
+    try:
+        chat_completion = await client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model="qwen/qwen3-32b",
+            temperature=0.2,
+            response_format={"type": "json_object"}
+        )
+        content = chat_completion.choices[0].message.content
+        return json.loads(content)
+    except Exception as e:
+        logger.error(f"[AI Service] classify_bug failed: {e}", exc_info=True)
+        return {
+            "cleaned_description": "AI Classification Failed. " + masked_subj,
+            "bug_category": "Error",
+            "root_cause_guess": "Error analyzing",
+            "module": "Unknown"
+        }
+
+async def generate_testcases_from_spec(spec_content: str, base_model_testcases: list) -> dict:
+    """
+    Sử dụng Groq AI (Llama3-70b) để sinh Testcase Json Format dựa trên Specs 
+    và các base rules truyền vào từ testcases trước đó.
+    """
+    if not settings.GROQ_API_KEY:
+        logger.warning("[AI Service] GROQ_API_KEY missing. Returning mock array.")
+        return {"testcases": []}
+        
+    client = AsyncGroq(api_key=settings.GROQ_API_KEY)
+    masked_spec = mask_sensitive_data(spec_content)
+    
+    # Chuẩn bị context của Base models
+    base_context = ""
+    for tc in base_model_testcases:
+        base_context += f"- Title: {tc.get('title')}\n  Precondition: {tc.get('precondition')}\n  Steps: {tc.get('steps')}\n  Expected: {tc.get('expected')}\n"
+
+    system_prompt = f"""Bạn là Test Automation Engineer Senior của công ty Thundersoft.
+Nhiệm vụ: Viết Testcases chất lượng cao cho Software Specification dưới đây.
+HỌC HỎI văn phong và độ chi tiết từ các Testcase Base Model sau:
+{base_context}
+
+Yêu cầu output BẮT BUỘC trả về ĐÚNG ĐỊNH DẠNG JSON MẢNG OBJECT NHƯ SAU:
+{{"testcases": [ {{"test_id": "1", "title": "Kiem tra chuc nang", "precondition": "Dieu kien", "steps": "Cac buoc...", "expected_result": "Ket qua..."}} ]}}
+KHÔNG output markdown ````json hay bất kỳ chú thích nào khác."""
+
+    try:
+        chat_completion = await client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"SPECIFICATION:\n{masked_spec}"}
+            ],
+            model="qwen/qwen3-32b",
+            temperature=0.2,
+            response_format={"type": "json_object"}
+        )
+        content = chat_completion.choices[0].message.content
+        return json.loads(content)
+    except Exception as e:
+        logger.error(f"[AI Service] generate_testcases failed: {e}", exc_info=True)
+        return {"testcases": [{"test_id": "ERR-01", "title": "AI Error", "precondition": "", "steps": str(e), "expected_result": "Failed to generate"}]}

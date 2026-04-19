@@ -180,3 +180,53 @@ async def get_affected_testcases(
         }
         for tc in tcs
     ]
+
+
+class AiDiffRequest(BaseModel):
+    spec_id: str
+    v1: int
+    v2: int
+    diff_text: str
+
+@router.post("/ai-diff-analyze")
+async def ai_diff_analyze(
+    req: AiDiffRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """AI phân tích sự khác biệt giữa 2 phiên bản Spec."""
+    from groq import AsyncGroq
+    from core.config import settings
+    import json
+
+    if not settings.GROQ_API_KEY:
+        return {"analysis": "GROQ_API_KEY chưa được cấu hình. Không thể phân tích AI."}
+
+    client = AsyncGroq(api_key=settings.GROQ_API_KEY)
+
+    prompt = f"""Bạn là chuyên gia QA tại Thundersoft.
+Dưới đây là kết quả so sánh (diff) giữa Version {req.v1} và Version {req.v2} của một Specification.
+
+```diff
+{req.diff_text[:3000]}
+```
+
+Hãy phân tích ngắn gọn:
+1. Tổng quan thay đổi: Liệt kê các phần chính đã thay đổi.
+2. Đánh giá mức độ ảnh hưởng đến Testcase hiện tại (Low/Medium/High).
+3. Các chức năng/module cần được re-test.
+4. Gợi ý hành động tiếp theo cho team QA.
+
+Trả lời bằng Tiếng Việt, format dạng bullet points rõ ràng."""
+
+    try:
+        chat_completion = await client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model="llama3-70b-8192",
+            temperature=0.3,
+        )
+        analysis = chat_completion.choices[0].message.content
+        return {"analysis": analysis}
+    except Exception as e:
+        logger.error(f"[AI DIFF] Error: {e}", exc_info=True)
+        return {"analysis": f"Lỗi AI: {str(e)}"}
+

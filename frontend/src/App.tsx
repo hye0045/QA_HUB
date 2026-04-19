@@ -1,7 +1,9 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
+import SpecCreator from './pages/SpecCreator';
 import SpecDiffViewer from './pages/SpecDiffViewer';
 import DefectAnalytics from './pages/DefectAnalytics';
+import TestCaseGenerator from './pages/TestCaseGenerator';
 import ChatbotUI from './components/ChatbotUI';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -36,9 +38,10 @@ function App() {
                                     <Route path="/" element={<Dashboard />} />
                                     <Route path="/specs/view/:id" element={<SpecViewer />} />
                                     
-                                    {/* Mọi Role trừ Intern được xem Specs Diff */}
                                     <Route element={<RoleRoute allowedRoles={['admin', 'qa_lead', 'tester']} />}>
+                                        <Route path="/specs/new" element={<SpecCreator />} />
                                         <Route path="/specs/diff" element={<SpecDiffViewer />} />
+                                        <Route path="/testcases/generate" element={<TestCaseGenerator />} />
                                     </Route>
 
                                     {/* Chỉ QA Lead & Admin được xem /analytics */}
