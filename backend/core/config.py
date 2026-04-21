@@ -21,8 +21,9 @@ class Settings(BaseSettings):
         "DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/QA_HUB"
     )
 
-    # AI Integration (bắt buộc - không có default)
-    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+    # AI Integration (Ollama local LLM)
+    OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "qwen:7b-chat")
 
     # Redmine Integration (bắt buộc - không có default secrets)
     REDMINE_URL: str = os.getenv("REDMINE_URL", "https://redhornet.csg.kyocera.co.jp/redmine")

@@ -181,30 +181,18 @@ async def suggest_testcase(
         for item in similar:
             context_text += f"- {item['title']}: {item.get('description', '')}\n"
 
-    # Gọi Groq AI để sinh gợi ý
+    # Gọi Ollama AI để sinh gợi ý
     try:
-        from groq import Groq
-        client = Groq(api_key=settings.GROQ_API_KEY)
-        response = client.chat.completions.create(
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a senior QA engineer at Thundersoft. "
-                        "Suggest effective, clear test cases. "
-                        "Do NOT duplicate existing testcases from context."
-                    )
-                },
-                {
-                    "role": "user",
-                    "content": f"{context_text}\n\nFeature to test: {prompt}"
-                }
-            ],
-            model="llama-3.1-70b-versatile"
+        from services.ai_service import call_llm
+        system_msg = (
+            "You are a senior QA engineer at Thundersoft. "
+            "Suggest effective, clear test cases. "
+            "Do NOT duplicate existing testcases from context."
         )
-        suggestion = response.choices[0].message.content
+        user_msg = f"{context_text}\n\nFeature to test: {prompt}"
+        suggestion = await call_llm(user_msg, system_prompt=system_msg)
     except Exception as e:
-        logger.error(f"[AI SUGGEST] Groq call failed: {e}", exc_info=True)
+        logger.error(f"[AI SUGGEST] Ollama call failed: {e}", exc_info=True)
         raise HTTPException(status_code=503, detail=f"AI service unavailable: {str(e)}")
 
     return {

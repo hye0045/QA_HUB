@@ -3,17 +3,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from pydantic import BaseModel
 from typing import Optional
-from groq import AsyncGroq
 import uuid
 
 from core.security import get_current_user
 from db.database import get_db
 from db.models import ChatHistory, ChatMode, Testcase
 from core.config import settings
-from services.ai_service import retrieve_top_k_similar, mask_sensitive_data
+from services.ai_service import retrieve_top_k_similar, mask_sensitive_data, call_llm
 
 router = APIRouter(prefix="/chat", tags=["AI Chatbot (Multi-Agent & RAG)"])
-MODEL_NAME = "qwen/qwen3-32b"
 
 class ChatRequest(BaseModel):
     mode: str # 'qa', 'translate', 'suggest'
@@ -78,13 +76,8 @@ async def chat_endpoint(
     ]
 
     try:
-        # 4. Call Groq API (async)
-        async_client = AsyncGroq(api_key=settings.GROQ_API_KEY)
-        response = await async_client.chat.completions.create(
-            messages=messages,
-            model=MODEL_NAME,
-        )
-        ai_reply = response.choices[0].message.content
+        # 4. Call Ollama LLM
+        ai_reply = await call_llm(user_msg, system_prompt=system_msg)
         
         try:
              chat_mode_enum = ChatMode(req.mode)

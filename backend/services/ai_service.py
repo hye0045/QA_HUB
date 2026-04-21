@@ -1,12 +1,39 @@
 import numpy as np
 import re
-from typing import List, Tuple
+import os
+import logging
+from typing import List, Tuple, Optional
 from sentence_transformers import SentenceTransformer
 
-# 1. Global Local Embedding Model
-# This will be loaded into RAM when the FastAPI app starts
-print("Loading Local Embedding Model: all-MiniLM-L6-v2 ...")
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+logger_embed = logging.getLogger("qa_hub.ai_service.embed")
+
+# 1. Lazy-loaded Local Embedding Model
+# Chỉ tải model khi thực sự cần dùng, tránh crash khi khởi động
+_embedding_model: Optional[SentenceTransformer] = None
+
+def _get_embedding_model() -> Optional[SentenceTransformer]:
+    """Lazy loader cho embedding model. Ưu tiên load từ cache local."""
+    global _embedding_model
+    if _embedding_model is not None:
+        return _embedding_model
+    
+    try:
+        # Thử load từ cache local trước (không cần internet)
+        _embedding_model = SentenceTransformer(
+            "all-MiniLM-L6-v2",
+            local_files_only=True
+        )
+        logger_embed.info("[Embedding] Model loaded from local cache.")
+    except Exception as e1:
+        logger_embed.warning(f"[Embedding] Local cache load failed: {e1}. Trying online download...")
+        try:
+            _embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+            logger_embed.info("[Embedding] Model downloaded and loaded successfully.")
+        except Exception as e2:
+            logger_embed.error(f"[Embedding] Cannot load model (offline + download failed): {e2}")
+            _embedding_model = None  # Backend vẫn hoạt động, chỉ tắt tính năng embedding
+    
+    return _embedding_model
 
 def get_embedding(text: str) -> List[float]:
     """
@@ -15,7 +42,11 @@ def get_embedding(text: str) -> List[float]:
     """
     if not text.strip():
         return []
-    vector = embedding_model.encode(text)
+    model = _get_embedding_model()
+    if model is None:
+        logger_embed.warning("[Embedding] Model unavailable. Returning empty vector.")
+        return []
+    vector = model.encode(text)
     return vector.tolist()
 
 # 2. In-Memory Cosine Similarity Calculation
@@ -81,31 +112,31 @@ def mask_sensitive_data(text: str) -> str:
     
     return text
 
-# 4. Groq LLM Integrations
-from groq import AsyncGroq
+# 4. Ollama LLM Integration
 import json
 import logging
 from core.config import settings
+from services.ollama_service import ollama_client
 
 logger = logging.getLogger("qa_hub.ai_service")
 
+async def call_llm(prompt: str, system_prompt: str = "You are helpful.") -> str:
+    """Gọi Ollama local LLM. Raise RuntimeError nếu Ollama không chạy."""
+    if not ollama_client.is_available():
+        raise RuntimeError(
+            f"Ollama server không chạy tại {ollama_client.base_url}. "
+            "Hãy mở terminal và chạy: ollama serve"
+        )
+    return await ollama_client.generate(prompt, system_prompt)
+
+
 async def clean_and_classify_bug(bug_subject: str, bug_description: str) -> dict:
     """
-    Sử dụng Groq AI để làm sạch mô tả Bug và phân loại thành JSON.
+    Sử dụng Ollama AI để làm sạch mô tả Bug và phân loại thành JSON.
     """
-    if not settings.GROQ_API_KEY:
-        logger.warning("[AI Service] GROQ_API_KEY missing. Returning mock classification.")
-        return {
-            "cleaned_description": f"[{bug_subject}] {bug_description[:50]}...",
-            "bug_category": "Uncategorized",
-            "root_cause_guess": "N/A",
-            "module": "General"
-        }
-    
-    client = AsyncGroq(api_key=settings.GROQ_API_KEY)
     masked_desc = mask_sensitive_data(bug_description)
     masked_subj = mask_sensitive_data(bug_subject)
-    
+
     prompt = f"""Bạn là chuyên gia QA. Đọc Bug thô, làm sạch text, tóm tắt và phân loại lỗi.
 Bug Subject: {masked_subj}
 Bug Description: {masked_desc}
@@ -120,35 +151,25 @@ Trả về ĐÚNG định dạng JSON sau (không kèm text thừa):
 {{"cleaned_description": "mo ta ngan gon...", "bug_category": "UI/Logic/Crash...", "root_cause_guess": "du doan nguyen nhan...", "module": "ten module..."}}"""
 
     try:
-        chat_completion = await client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
-            model="qwen/qwen3-32b",
-            temperature=0.2,
-            response_format={"type": "json_object"}
-        )
-        content = chat_completion.choices[0].message.content
-        return json.loads(content)
+        response = await call_llm(prompt, system_prompt="Bạn là chuyên gia QA. Hãy xuất ra JSON hợp lệ.")
+        return json.loads(response)
     except Exception as e:
         logger.error(f"[AI Service] classify_bug failed: {e}", exc_info=True)
         return {
-            "cleaned_description": "AI Classification Failed. " + masked_subj,
+            "cleaned_description": f"[{masked_subj}] {masked_desc[:100]}",
             "bug_category": "Error",
-            "root_cause_guess": "Error analyzing",
+            "root_cause_guess": f"AI không khả dụng: {str(e)}",
             "module": "Unknown"
         }
 
+
 async def generate_testcases_from_spec(spec_content: str, base_model_testcases: list) -> dict:
     """
-    Sử dụng Groq AI (Llama3-70b) để sinh Testcase Json Format dựa trên Specs 
+    Sử dụng Ollama AI để sinh Testcase JSON Format dựa trên Specs
     và các base rules truyền vào từ testcases trước đó.
     """
-    if not settings.GROQ_API_KEY:
-        logger.warning("[AI Service] GROQ_API_KEY missing. Returning mock array.")
-        return {"testcases": []}
-        
-    client = AsyncGroq(api_key=settings.GROQ_API_KEY)
     masked_spec = mask_sensitive_data(spec_content)
-    
+
     # Chuẩn bị context của Base models
     base_context = ""
     for tc in base_model_testcases:
@@ -164,17 +185,8 @@ Yêu cầu output BẮT BUỘC trả về ĐÚNG ĐỊNH DẠNG JSON MẢNG OBJE
 KHÔNG output markdown ````json hay bất kỳ chú thích nào khác."""
 
     try:
-        chat_completion = await client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"SPECIFICATION:\n{masked_spec}"}
-            ],
-            model="qwen/qwen3-32b",
-            temperature=0.2,
-            response_format={"type": "json_object"}
-        )
-        content = chat_completion.choices[0].message.content
-        return json.loads(content)
+        response = await call_llm(f"SPECIFICATION:\n{masked_spec}", system_prompt=system_prompt)
+        return json.loads(response)
     except Exception as e:
         logger.error(f"[AI Service] generate_testcases failed: {e}", exc_info=True)
         return {"testcases": [{"test_id": "ERR-01", "title": "AI Error", "precondition": "", "steps": str(e), "expected_result": "Failed to generate"}]}

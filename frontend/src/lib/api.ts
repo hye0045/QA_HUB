@@ -128,4 +128,48 @@ export const useDefectsData = () => {
     return { data, loading, error };
 };
 
+// -------------------------------------------------------------------
+// Hook: useAIStatus — kiểm tra trạng thái Ollama/AI
+// -------------------------------------------------------------------
+export interface AIStatus {
+    server_running: boolean;
+    model_ready: boolean;
+    model_name: string;
+    available_models: string[];
+    status_message: string;
+    ai_features_enabled: boolean;
+}
+
+export const useAIStatus = () => {
+    const [status, setStatus] = useState<AIStatus | null>(null);
+    const [loading, setLoading] = useState(true);
+
+    const check = async () => {
+        try {
+            const res = await api.get('/ai/status');
+            setStatus(res.data);
+        } catch {
+            setStatus({
+                server_running: false,
+                model_ready: false,
+                model_name: '',
+                available_models: [],
+                status_message: '🔴 Không thể kết nối tới backend.',
+                ai_features_enabled: false,
+            });
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        check();
+        // Tự động kiểm tra lại mỗi 30 giây
+        const interval = setInterval(check, 30000);
+        return () => clearInterval(interval);
+    }, []);
+
+    return { status, loading, refetch: check };
+};
+
 export default api;

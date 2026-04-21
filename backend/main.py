@@ -71,6 +71,23 @@ def root():
     return {"message": "Welcome to QA HUB API"}
 
 
+@app.get("/api/ai/status")
+def ai_status():
+    """Kiểm tra trạng thái Ollama và model. Frontend gọi để hiển thị thông báo."""
+    from services.ollama_service import ollama_client
+    server_up = ollama_client.is_available()
+    model_ready = ollama_client.is_model_ready() if server_up else False
+    return {
+        "server_running": server_up,
+        "model_ready": model_ready,
+        "model_name": ollama_client.model,
+        "base_url": ollama_client.base_url,
+        "available_models": ollama_client.get_available_models() if server_up else [],
+        "status_message": ollama_client.get_status_message(),
+        "ai_features_enabled": model_ready,
+    }
+
+
 app.include_router(auth.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(testcases.router, prefix="/api")
