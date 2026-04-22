@@ -21,3 +21,5 @@ sync_script/env/
 # OS Files
 .DS_Store
 Thumbs.db
+.gitnexus
+node_modules/
