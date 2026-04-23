@@ -111,7 +111,7 @@ class ChatHistory(Base):
     __tablename__ = "chat_history"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
-    mode = Column(Enum(ChatMode), nullable=False)
+    mode = Column(Enum(ChatMode, name="chat_mode"), nullable=False)
     prompt = Column(String, nullable=False)
     response = Column(String, nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)

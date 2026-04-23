@@ -99,9 +99,10 @@ async def sync_spec(
             )
             logger.info(f"[SPEC SYNC] Marked {len(linked_tc_ids)} testcases as affected for spec={spec_id}")
 
-        # Tạo embedding vector
+        # Tạo embedding vector (chạy trong thread riêng để không block event loop)
+        from fastapi.concurrency import run_in_threadpool
         from services.ai_service import get_embedding
-        embedding_vector = get_embedding(spec.content)
+        embedding_vector = await run_in_threadpool(get_embedding, spec.content)
 
         # Tạo version mới
         new_version = SpecVersion(

@@ -23,3 +23,4 @@ sync_script/env/
 Thumbs.db
 .gitnexus
 node_modules/
+*.log

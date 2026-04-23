@@ -37,51 +37,57 @@ const SpecCreator: React.FC = () => {
         setError(null);
         setSheets([]);
         setActiveSheet(0);
+        setLoading(true);
 
         const reader = new FileReader();
         reader.onload = (evt) => {
-            try {
-                const bstr = evt.target?.result;
-                const workbook = XLSX.read(bstr, { type: 'binary' });
+            // Sử dụng setTimeout để tránh chặn main thread ngay lập tức, cho phép UI hiển thị trạng thái loading
+            setTimeout(() => {
+                try {
+                    const bstr = evt.target?.result;
+                    const workbook = XLSX.read(bstr, { type: 'binary' });
 
-                const parsedSheets: SheetData[] = [];
-                let fullContent = '';
+                    const parsedSheets: SheetData[] = [];
+                    let fullContent = '';
 
-                workbook.SheetNames.forEach((sheetName, idx) => {
-                    const sheet = workbook.Sheets[sheetName];
+                    workbook.SheetNames.forEach((sheetName, idx) => {
+                        const sheet = workbook.Sheets[sheetName];
 
-                    // Lấy dữ liệu dạng mảng 2D (cho preview bảng)
-                    const rawData: string[][] = XLSX.utils.sheet_to_json(sheet, {
-                        header: 1,
-                        defval: '',
-                        raw: false,
-                    }) as string[][];
+                        // Lấy dữ liệu dạng mảng 2D (cho preview bảng)
+                        const rawData: string[][] = XLSX.utils.sheet_to_json(sheet, {
+                            header: 1,
+                            defval: '',
+                            raw: false,
+                        }) as string[][];
 
-                    // Lọc bỏ hàng toàn empty
-                    const filtered = rawData.filter(row => row.some(cell => cell !== ''));
+                        // Lọc bỏ hàng toàn empty
+                        const filtered = rawData.filter(row => row.some(cell => cell !== ''));
 
-                    const headers = filtered[0] || [];
-                    const rows = filtered.slice(1);
+                        const headers = filtered[0] || [];
+                        const rows = filtered.slice(1);
 
-                    parsedSheets.push({ name: sheetName, headers, rows });
+                        parsedSheets.push({ name: sheetName, headers, rows });
 
-                    // Tạo text content gửi lên backend
-                    const sheetText = XLSX.utils.sheet_to_txt(sheet);
-                    fullContent += `=== Sheet ${idx + 1}: ${sheetName} ===\n${sheetText}\n\n`;
-                });
+                        // Tạo text content gửi lên backend
+                        const sheetText = XLSX.utils.sheet_to_txt(sheet);
+                        fullContent += `=== Sheet ${idx + 1}: ${sheetName} ===\n${sheetText}\n\n`;
+                    });
 
-                setSheets(parsedSheets);
-                setContent(fullContent);
-                setShowPreview(true);
+                    setSheets(parsedSheets);
+                    setContent(fullContent);
+                    setShowPreview(true);
 
-                // Tự động đặt title nếu chưa có
-                if (!title.trim()) {
-                    const baseName = file.name.replace(/\.(xlsx|xls)$/i, '');
-                    setTitle(baseName);
+                    // Tự động đặt title nếu chưa có
+                    if (!title.trim()) {
+                        const baseName = file.name.replace(/\.(xlsx|xls)$/i, '');
+                        setTitle(baseName);
+                    }
+                } catch (err) {
+                    setError('❌ Không thể đọc file Excel. Vui lòng kiểm tra định dạng file.');
+                } finally {
+                    setLoading(false);
                 }
-            } catch (err) {
-                setError('❌ Không thể đọc file Excel. Vui lòng kiểm tra định dạng file.');
-            }
+            }, 50);
         };
         reader.readAsBinaryString(file);
     };
@@ -224,7 +230,7 @@ const SpecCreator: React.FC = () => {
                                         </thead>
                                     )}
                                     <tbody>
-                                        {sheets[activeSheet].rows.map((row, rIdx) => (
+                                        {sheets[activeSheet].rows.slice(0, 100).map((row, rIdx) => (
                                             <tr key={rIdx} style={{ background: rIdx % 2 === 0 ? 'white' : '#f8fafb' }}>
                                                 <td style={{ padding: '0.4rem 0.75rem', border: '1px solid #dee2e6', color: '#adb5bd', textAlign: 'center', fontSize: '0.8rem' }}>
                                                     {rIdx + 1}
@@ -236,6 +242,13 @@ const SpecCreator: React.FC = () => {
                                                 ))}
                                             </tr>
                                         ))}
+                                        {sheets[activeSheet].rows.length > 100 && (
+                                            <tr>
+                                                <td colSpan={sheets[activeSheet].headers.length + 1} style={{ padding: '1rem', textAlign: 'center', color: '#7f8c8d', fontStyle: 'italic', background: '#f8f9fa' }}>
+                                                    ... Và {sheets[activeSheet].rows.length - 100} hàng khác không được hiển thị để đảm bảo hiệu suất ...
+                                                </td>
+                                            </tr>
+                                        )}
                                         {sheets[activeSheet].rows.length === 0 && (
                                             <tr>
                                                 <td colSpan={sheets[activeSheet].headers.length + 1} style={{ padding: '1rem', textAlign: 'center', color: '#adb5bd' }}>
@@ -247,8 +260,9 @@ const SpecCreator: React.FC = () => {
                                 </table>
                             </div>
                         )}
-                        <div style={{ padding: '0.4rem 0.75rem', background: '#f8f9fa', borderTop: '1px solid #dee2e6', fontSize: '0.8rem', color: '#6c757d' }}>
-                            {sheets[activeSheet]?.rows.length} hàng dữ liệu · {sheets[activeSheet]?.headers.length} cột
+                        <div style={{ padding: '0.4rem 0.75rem', background: '#f8f9fa', borderTop: '1px solid #dee2e6', fontSize: '0.8rem', color: '#6c757d', display: 'flex', justifyContent: 'space-between' }}>
+                            <span>{sheets[activeSheet]?.rows.length} hàng dữ liệu · {sheets[activeSheet]?.headers.length} cột</span>
+                            {sheets[activeSheet]?.rows.length > 100 && <span style={{ color: '#e67e22' }}>⚠️ Chỉ hiển thị 100 hàng đầu tiên trong preview</span>}
                         </div>
                     </div>
                 )}

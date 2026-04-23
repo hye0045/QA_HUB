@@ -7,13 +7,11 @@ const SpecViewer: React.FC = () => {
     const [spec, setSpec] = useState<Spec | null>(null);
     const [loading, setLoading] = useState(true);
     const [translating, setTranslating] = useState(false);
-    const [translatedText, setTranslatedText] = useState<string | null>(null);
+    const [activeSheetIdx, setActiveSheetIdx] = useState(0);
 
-    // Version selector state
+    const [translatedText, setTranslatedText] = useState<string | null>(null);
     const [versions, setVersions] = useState<number[]>([]);
     const [selectedVersion, setSelectedVersion] = useState<number>(1);
-
-    // Diff state
     const [diffV1, setDiffV1] = useState(1);
     const [diffV2, setDiffV2] = useState(2);
     const [diff, setDiff] = useState<string | null>(null);
@@ -44,14 +42,37 @@ const SpecViewer: React.FC = () => {
         fetchSpec();
     }, [id]);
 
+    // Phân tách nội dung thành các Sheet dựa trên marker "=== Sheet X: Name ==="
+    const parseSheets = (text: string) => {
+        if (!text) return [];
+        const sheets: { name: string, content: string }[] = [];
+        const parts = text.split(/=== Sheet \d+: (.*?) ===/);
+        
+        if (parts.length <= 1) {
+            return [{ name: 'Nội dung', content: text }];
+        }
+
+        for (let i = 1; i < parts.length; i += 2) {
+            sheets.push({
+                name: parts[i],
+                content: parts[i+1]?.trim() || ''
+            });
+        }
+        return sheets;
+    };
+
+    const sheetList = parseSheets(spec?.content || '');
+
     const handleTranslate = async (targetLang: string) => {
-        if (!spec?.content) return;
+        const currentContent = sheetList[activeSheetIdx]?.content;
+        if (!currentContent) return;
+
         setTranslating(true);
-        setTranslatedText('AI đang dịch tài liệu...');
+        setTranslatedText('AI đang dịch sheet này...');
         try {
             const res = await api.post('/chat', {
                 mode: 'translate',
-                prompt: spec.content,
+                prompt: currentContent.substring(0, 20000), // Giới hạn 20k ký tự để tránh treo Ollama
                 target_lang: targetLang
             });
             setTranslatedText(res.data.response);
@@ -108,22 +129,22 @@ const SpecViewer: React.FC = () => {
                         disabled={translating}
                         style={{ padding: '0.6rem 1rem', background: '#3498db', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
                     >
-                        A→E Dịch Tiếng Anh
+                        A→E Dịch Sheet Hiện Tại (Anh)
                     </button>
                     <button
                         onClick={() => handleTranslate('Japanese')}
                         disabled={translating}
                         style={{ padding: '0.6rem 1rem', background: '#e74c3c', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
                     >
-                        A→J Dịch Tiếng Nhật
+                        A→J Dịch Sheet Hiện Tại (Nhật)
                     </button>
                 </div>
             </div>
 
-            {/* Version Selector */}
-            {versions.length > 1 && (
-                <div style={{ background: 'white', padding: '1rem', borderRadius: '8px', marginBottom: '1.5rem', boxShadow: '0 1px 3px rgba(0,0,0,0.07)', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
-                    <label style={{ fontWeight: 'bold' }}>Xem phiên bản:</label>
+            {/* Version & Sheet Selector */}
+            <div style={{ background: 'white', padding: '1rem', borderRadius: '8px', marginBottom: '1.5rem', boxShadow: '0 1px 3px rgba(0,0,0,0.07)', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <label style={{ fontWeight: 'bold' }}>Phiên bản:</label>
                     <select
                         value={selectedVersion}
                         onChange={e => setSelectedVersion(Number(e.target.value))}
@@ -133,9 +154,29 @@ const SpecViewer: React.FC = () => {
                             <option key={v} value={v}>v{v}{v === spec.latest_version ? ' (mới nhất)' : ''}</option>
                         ))}
                     </select>
+                </div>
 
-                    {/* So sánh 2 phiên bản */}
-                    <span style={{ color: '#95a5a6' }}>|</span>
+                <span style={{ color: '#ecf0f1' }}>|</span>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <label style={{ fontWeight: 'bold' }}>Chọn Sheet:</label>
+                    <select
+                        value={activeSheetIdx}
+                        onChange={e => {
+                            setActiveSheetIdx(Number(e.target.value));
+                            setTranslatedText(null);
+                        }}
+                        style={{ padding: '0.4rem 0.8rem', borderRadius: '4px', border: '1px solid #3498db', color: '#2980b9', fontWeight: 'bold' }}
+                    >
+                        {sheetList.map((sh, idx) => (
+                            <option key={idx} value={idx}>{sh.name}</option>
+                        ))}
+                    </select>
+                </div>
+
+                <span style={{ color: '#ecf0f1' }}>|</span>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <label style={{ fontWeight: 'bold' }}>So sánh:</label>
                     <select value={diffV1} onChange={e => setDiffV1(Number(e.target.value))} style={{ padding: '0.4rem', borderRadius: '4px', border: '1px solid #ccc' }}>
                         {versions.map(v => <option key={v} value={v}>v{v}</option>)}
@@ -149,34 +190,76 @@ const SpecViewer: React.FC = () => {
                         disabled={diffLoading}
                         style={{ padding: '0.4rem 1rem', background: '#6c757d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
                     >
-                        {diffLoading ? 'Đang so sánh...' : '📊 So sánh'}
+                        📊 So sánh
                     </button>
                 </div>
-            )}
+            </div>
 
             {/* Diff Result */}
             {diff && (
-                <div style={{ background: '#1e1e2e', color: '#cdd6f4', padding: '1.5rem', borderRadius: '8px', marginBottom: '1.5rem', fontFamily: 'monospace', whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
-                    <div style={{ marginBottom: '0.5rem', color: '#a6e3a1', fontSize: '0.85rem' }}>
-                        Diff v{diffV1} → v{diffV2}
+                <div style={{ 
+                    background: '#1e1e2e', 
+                    color: '#cdd6f4', 
+                    padding: '1.5rem', 
+                    borderRadius: '8px', 
+                    marginBottom: '1.5rem', 
+                    fontFamily: 'monospace', 
+                    whiteSpace: 'pre-wrap', 
+                    overflowX: 'auto', 
+                    borderLeft: '5px solid #f38ba8',
+                    maxHeight: '400px',
+                    overflowY: 'auto'
+                }}>
+                    <div style={{ marginBottom: '0.5rem', color: '#f5c2e7', fontWeight: 'bold' }}>
+                        Kết quả so sánh v{diffV1} và v{diffV2}:
+                        {diff.length > 30000 && <span style={{ color: '#fab387', marginLeft: '1rem' }}>(Đã rút gọn vì nội dung quá lớn)</span>}
                     </div>
-                    {diff}
+                    {diff.length > 30000 ? diff.substring(0, 30000) + '\n\n... (Dữ liệu quá lớn, vui lòng tải file để xem đầy đủ) ...' : diff}
                 </div>
             )}
 
             {/* Content Grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: '1.5rem' }}>
-                <div style={{ background: 'white', padding: '1.5rem', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.08)' }}>
-                    <h3 style={{ borderBottom: '2px solid #ecf0f1', paddingBottom: '0.5rem' }}>Bản Gốc ({spec.language})</h3>
-                    <div style={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace', marginTop: '1rem', fontSize: '0.9rem' }}>
-                        {spec.content}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', minHeight: '500px' }}>
+                <div style={{ background: 'white', padding: '1.5rem', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column' }}>
+                    <h3 style={{ borderBottom: '2px solid #3498db', paddingBottom: '0.5rem', marginTop: 0 }}>
+                        Bản Gốc: {sheetList[activeSheetIdx]?.name}
+                    </h3>
+                    <div style={{ 
+                        whiteSpace: 'pre-wrap', 
+                        fontFamily: 'monospace', 
+                        marginTop: '1rem', 
+                        fontSize: '0.85rem', 
+                        overflowY: 'auto', 
+                        maxHeight: '600px',
+                        flex: 1,
+                        lineHeight: '1.6',
+                        background: '#fafafa',
+                        padding: '1rem',
+                        border: '1px solid #f1f1f1'
+                    }}>
+                        {sheetList[activeSheetIdx]?.content || 'Sheet này không có nội dung.'}
                     </div>
                 </div>
 
-                <div style={{ background: '#f8f9fa', padding: '1.5rem', borderRadius: '8px', border: '1px solid #ecf0f1' }}>
-                    <h3 style={{ borderBottom: '2px solid #ecf0f1', paddingBottom: '0.5rem', color: '#8e44ad' }}>Bản Dịch AI</h3>
-                    <div style={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace', marginTop: '1rem', color: translatedText ? '#2c3e50' : '#95a5a6', fontSize: '0.9rem' }}>
-                        {translatedText || 'Bấm nút dịch ở trên để AI phân tích và dịch tài liệu này...'}
+                <div style={{ background: 'white', padding: '1.5rem', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column' }}>
+                    <h3 style={{ borderBottom: '2px solid #8e44ad', paddingBottom: '0.5rem', color: '#8e44ad', marginTop: 0 }}>
+                        Bản Dịch AI (Sheet: {sheetList[activeSheetIdx]?.name})
+                    </h3>
+                    <div style={{ 
+                        whiteSpace: 'pre-wrap', 
+                        fontFamily: 'monospace', 
+                        marginTop: '1rem', 
+                        color: translatedText ? '#2c3e50' : '#95a5a6', 
+                        fontSize: '0.85rem',
+                        overflowY: 'auto',
+                        maxHeight: '600px',
+                        flex: 1,
+                        lineHeight: '1.6',
+                        background: '#fcfcfc',
+                        padding: '1rem',
+                        border: '1px solid #f1f1f1'
+                    }}>
+                        {translatedText || 'Chọn ngôn ngữ ở trên để AI dịch nội dung của sheet hiện tại...'}
                     </div>
                 </div>
             </div>
