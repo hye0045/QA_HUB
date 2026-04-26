@@ -77,6 +77,16 @@ async def upload_testcases_excel(
             skipped += 1
             continue
 
+        from services.ai_service import get_embedding
+
+        combined_text = (
+            f"{title}. "
+            f"{str(row_dict.get('description') or '')}. "
+            f"Steps: {str(row_dict.get('steps') or '')}. "
+            f"Expected: {str(row_dict.get('expected_result') or '')}"
+        )
+        embedding_vector = get_embedding(combined_text)
+
         tc = Testcase(
             title=title,
             description=str(row_dict.get("description") or ""),
@@ -86,6 +96,7 @@ async def upload_testcases_excel(
             precondition=str(row_dict.get("precondition") or ""),
             model_id=profile.name,
             status="draft",
+            embedding=embedding_vector if embedding_vector else None,
             created_by=uuid.UUID(current_user["id"]),
         )
         db.add(tc)

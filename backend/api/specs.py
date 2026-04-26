@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import update
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 import uuid
 import logging
@@ -21,6 +21,8 @@ class SpecSync(BaseModel):
     language: str
     content: str
     version_number: int
+    feature_name: Optional[str] = None
+    model_profile_ids: List[str] = []
 
 
 @router.get("/")
@@ -33,19 +35,42 @@ async def list_specs(
 
     data = []
     for s in specs:
+        # Lấy tất cả versions kèm thông tin models
         ver_res = await db.execute(
             select(SpecVersion)
             .where(SpecVersion.specification_id == s.id)
             .order_by(SpecVersion.version_number.desc())
-            .limit(1)
         )
-        ver = ver_res.scalars().first()
+        versions = ver_res.scalars().all()
+
+        versions_info = []
+        for ver in versions:
+            # Lấy danh sách models của version này
+            from db.models import spec_version_model_link, DeviceModelProfile
+            model_res = await db.execute(
+                select(DeviceModelProfile)
+                .join(
+                    spec_version_model_link,
+                    spec_version_model_link.c.model_profile_id == DeviceModelProfile.id
+                )
+                .where(spec_version_model_link.c.spec_version_id == ver.id)
+            )
+            models = model_res.scalars().all()
+            versions_info.append({
+                "version_number": ver.version_number,
+                "created_at": ver.created_at.isoformat(),
+                "supported_models": [{"id": str(m.id), "name": m.name} for m in models]
+            })
+
+        latest_ver = versions[0] if versions else None
         data.append({
             "id": str(s.id),
             "title": s.title,
+            "feature_name": s.feature_name or s.title,
             "language": s.language,
-            "latest_version": ver.version_number if ver else 0,
-            "content": ver.content if ver else ""
+            "latest_version": latest_ver.version_number if latest_ver else 0,
+            "content": latest_ver.content if latest_ver else "",
+            "versions": versions_info
         })
 
     return data
@@ -65,9 +90,12 @@ async def sync_spec(
 
         if existing_spec:
             spec_id = existing_spec.id
+            if spec.feature_name:
+                existing_spec.feature_name = spec.feature_name
         else:
             new_spec = Specification(
                 title=spec.title,
+                feature_name=spec.feature_name or spec.title,
                 language=spec.language,
                 created_by=uuid.UUID(current_user['id'])
             )
@@ -113,15 +141,144 @@ async def sync_spec(
             created_by=uuid.UUID(current_user['id'])
         )
         db.add(new_version)
-        await db.commit()
+        await db.flush()
 
-        logger.info(f"[SPEC SYNC] SUCCESS spec_id={spec_id} version={spec.version_number}")
-        return {"message": "Spec synced successfully and trigger executed", "spec_id": str(spec_id)}
+        if spec.model_profile_ids:
+            from db.models import spec_version_model_link, DeviceModelProfile
+            for profile_id_str in spec.model_profile_ids:
+                try:
+                    profile_uuid = uuid.UUID(profile_id_str)
+                    prof_res = await db.execute(
+                        select(DeviceModelProfile).where(DeviceModelProfile.id == profile_uuid)
+                    )
+                    if prof_res.scalars().first():
+                        await db.execute(
+                            spec_version_model_link.insert().values(
+                                spec_version_id=new_version.id,
+                                model_profile_id=profile_uuid
+                            )
+                        )
+                except (ValueError, Exception) as e:
+                    logger.warning(f"[SPEC SYNC] Bỏ qua model_profile_id không hợp lệ: {profile_id_str}: {e}")
+
+        await db.commit()
+        logger.info(f"[SPEC SYNC] SUCCESS spec_id={spec_id} version={spec.version_number} models={spec.model_profile_ids}")
+        return {
+            "message": "Spec synced successfully",
+            "spec_id": str(spec_id),
+            "version_id": str(new_version.id),
+            "linked_models": len(spec.model_profile_ids)
+        }
 
     except Exception as e:
         await db.rollback()
         logger.error(f"[SPEC SYNC] FAILED title='{spec.title}' error={str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
+
+
+@router.get("/by-feature")
+async def get_specs_by_feature(
+    feature_name: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Trả về tất cả Specification có cùng feature_name.
+    Dùng để so sánh cùng 1 chức năng spec giữa các dòng máy khác nhau.
+    """
+    result = await db.execute(
+        select(Specification).where(
+            Specification.feature_name.ilike(f"%{feature_name}%")
+        )
+    )
+    specs = result.scalars().all()
+
+    data = []
+    for s in specs:
+        from db.models import spec_version_model_link, DeviceModelProfile
+
+        ver_res = await db.execute(
+            select(SpecVersion)
+            .where(SpecVersion.specification_id == s.id)
+            .order_by(SpecVersion.version_number.desc())
+        )
+        versions = ver_res.scalars().all()
+
+        for ver in versions:
+            model_res = await db.execute(
+                select(DeviceModelProfile)
+                .join(
+                    spec_version_model_link,
+                    spec_version_model_link.c.model_profile_id == DeviceModelProfile.id
+                )
+                .where(spec_version_model_link.c.spec_version_id == ver.id)
+            )
+            models = model_res.scalars().all()
+            data.append({
+                "spec_id": str(s.id),
+                "spec_title": s.title,
+                "feature_name": s.feature_name,
+                "version_number": ver.version_number,
+                "version_id": str(ver.id),
+                "supported_models": [{"id": str(m.id), "name": m.name} for m in models],
+                "content_preview": ver.content[:300] + "..." if len(ver.content) > 300 else ver.content
+            })
+
+    return data
+
+
+@router.get("/cross-model-diff")
+async def cross_model_diff(
+    spec_id_a: str,
+    version_a: int,
+    spec_id_b: str,
+    version_b: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    So sánh spec giữa 2 dòng máy khác nhau (hoặc 2 versions khác nhau).
+    """
+    import difflib
+
+    async def get_version_content(spec_id_str: str, ver_num: int):
+        ver_res = await db.execute(
+            select(SpecVersion).where(
+                SpecVersion.specification_id == uuid.UUID(spec_id_str),
+                SpecVersion.version_number == ver_num
+            )
+        )
+        ver = ver_res.scalars().first()
+        if not ver:
+            return None, None
+        from db.models import spec_version_model_link, DeviceModelProfile
+        model_res = await db.execute(
+            select(DeviceModelProfile)
+            .join(spec_version_model_link,
+                  spec_version_model_link.c.model_profile_id == DeviceModelProfile.id)
+            .where(spec_version_model_link.c.spec_version_id == ver.id)
+        )
+        models = [m.name for m in model_res.scalars().all()]
+        return ver.content, models
+
+    content_a, models_a = await get_version_content(spec_id_a, version_a)
+    content_b, models_b = await get_version_content(spec_id_b, version_b)
+
+    if not content_a or not content_b:
+        raise HTTPException(status_code=404, detail="Không tìm thấy một trong hai version")
+
+    text_a = content_a.splitlines(keepends=True)
+    text_b = content_b.splitlines(keepends=True)
+
+    label_a = f"spec={spec_id_a[:8]} v{version_a} [{', '.join(models_a) or 'no model'}]"
+    label_b = f"spec={spec_id_b[:8]} v{version_b} [{', '.join(models_b) or 'no model'}]"
+
+    diff = list(difflib.unified_diff(text_a, text_b, fromfile=label_a, tofile=label_b))
+    return {
+        "diff": "".join(diff),
+        "source": {"spec_id": spec_id_a, "version": version_a, "models": models_a},
+        "target": {"spec_id": spec_id_b, "version": version_b, "models": models_b}
+    }
 
 
 @router.get("/{spec_id}/diff")

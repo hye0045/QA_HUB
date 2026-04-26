@@ -27,7 +27,7 @@ async def list_defects(
     return result.scalars().all()
 
 
-from services.ai_service import clean_and_classify_bug
+from services.ai_service import clean_and_classify_bug, get_embedding
 
 from db.models import DeviceModelProfile
 import uuid
@@ -80,8 +80,17 @@ async def sync_defects(
 
     synced_count = 0
     for d in redmine_bugs:
-        # 2. Gọi AI Classify
+        # 1. AI Classify
         ai_result = await clean_and_classify_bug(d["title"], d.get("description", ""))
+        
+        # 2. Sinh embedding từ cleaned_description để RAG search
+        embed_text = (
+            f"{d['title']}. "
+            f"{ai_result.get('cleaned_description', '')}. "
+            f"Category: {ai_result.get('bug_category', '')}. "
+            f"Module: {ai_result.get('module', '')}"
+        )
+        defect_embedding = get_embedding(embed_text[:500])
         
         # 3. Lưu vào Database
         result = await db.execute(select(Defect).where(Defect.redmine_id == d["redmine_id"]))
@@ -96,6 +105,7 @@ async def sync_defects(
             existing_defect.bug_category = ai_result.get("bug_category")
             existing_defect.root_cause_guess = ai_result.get("root_cause_guess")
             existing_defect.module = ai_result.get("module")
+            existing_defect.embedding = defect_embedding if defect_embedding else None
         else:
             new_defect = Defect(
                 redmine_id=d["redmine_id"],
@@ -106,7 +116,8 @@ async def sync_defects(
                 cleaned_description=ai_result.get("cleaned_description"),
                 bug_category=ai_result.get("bug_category"),
                 root_cause_guess=ai_result.get("root_cause_guess"),
-                module=ai_result.get("module")
+                module=ai_result.get("module"),
+                embedding=defect_embedding if defect_embedding else None
             )
             db.add(new_defect)
         synced_count += 1

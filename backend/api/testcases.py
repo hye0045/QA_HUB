@@ -205,40 +205,127 @@ class GenerateTestcaseRequest(BaseModel):
     spec_text: str
     base_model: str
 
-@router.post("/generate")
-async def generate_testcases_from_spec_endpoint(
-    req: GenerateTestcaseRequest,
+
+class RagGenerateRequest(BaseModel):
+    spec_text: str               # Spec của dòng máy mới (paste text hoặc lấy từ SpecVersion)
+    base_model_name: str         # Tên dòng máy gốc (VD: "Samsung S24")
+    new_model_name: str          # Tên dòng máy mới cần sinh TC (VD: "Samsung S25")
+    spec_id: Optional[str] = None  # Nếu có, tự lấy content từ SpecVersion mới nhất
+    tc_k: int = 5
+    bug_k: int = 5
+
+class SaveGeneratedTCsRequest(BaseModel):
+    model_id: str
+    tc_type: str = "functional"
+    testcases: List[dict]
+
+
+@router.post("/generate-from-base-model")
+async def generate_testcases_from_base_model(
+    req: RagGenerateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    """[AI] Tự động sinh hàng loạt Testcase từ tài liệu Spec kết hợp RAG model"""
-    from services.ai_service import generate_testcases_from_spec
-    
-    # Mock behavior: lấy 1-2 testcases mẫu từ base_model
-    # Trong thực tế: result = await db.execute(select(Testcase).where(Testcase.model_id == req.base_model).limit(2))
-    base_tcs = []
-    result = await db.execute(
-        select(Testcase)
-        .where(Testcase.status == "active")
-        .limit(2)
-    )
-    for tc in result.scalars().all():
-        base_tcs.append({
-            "title": tc.title,
-            "precondition": tc.precondition or "",
-            "steps": tc.steps or "",
-            "expected": tc.expected_result or ""
-        })
+    """
+    [AI + RAG] Sinh Testcase cho dòng máy mới dựa trên:
+      1. Spec của dòng máy mới (text hoặc spec_id)
+      2. Testcase Active của base_model_name (học văn phong + coverage)
+      3. Defect history của base_model_name (sinh bug-list TC)
 
-    # Nếu không có mẫu, tạo 1 mẫu cứng làm base prompt
-    if not base_tcs:
-        base_tcs = [{
-            "title": "Kiểm tra màn hình hiển thị",
-            "precondition": "Thiết bị được bật nguồn.",
-            "steps": "1. Mở ứng dụng.\n2. Quan sát màn hình chính.",
-            "expected": "Màn hình chính hiển thị đầy đủ icon không bị vỡ layout."
-        }]
+    Output JSON:
+    {
+      "functional": [{id, title, precondition, steps, expected_result}],
+      "bug_list":   [{id, title, precondition, steps, expected_result, ref_bug}],
+      "_meta": {base_model, new_model, similar_tcs_found, similar_bugs_found}
+    }
+    """
+    from services.rag_service import generate_testcases_rag
+    from db.models import SpecVersion, Specification
 
-    ai_response = await generate_testcases_from_spec(req.spec_text, base_tcs)
-    
-    return ai_response
+    # Nếu có spec_id, lấy content từ phiên bản mới nhất
+    spec_text = req.spec_text
+    if req.spec_id and not spec_text.strip():
+        try:
+            spec_uuid = uuid.UUID(req.spec_id)
+            ver_res = await db.execute(
+                select(SpecVersion)
+                .where(SpecVersion.specification_id == spec_uuid)
+                .order_by(SpecVersion.version_number.desc())
+                .limit(1)
+            )
+            ver = ver_res.scalars().first()
+            if ver:
+                spec_text = ver.content
+        except Exception as e:
+            logger.warning(f"[TC GENERATE] Không lấy được spec_id: {e}")
+
+    if not spec_text.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Cần cung cấp spec_text hoặc spec_id hợp lệ có content."
+        )
+
+    try:
+        result = await generate_testcases_rag(
+            db=db,
+            spec_text=spec_text,
+            base_model_name=req.base_model_name,
+            new_model_name=req.new_model_name,
+            tc_k=req.tc_k,
+            bug_k=req.bug_k,
+        )
+        logger.info(
+            f"[TC GENERATE RAG] user={current_user['id']} "
+            f"base={req.base_model_name} → new={req.new_model_name} "
+            f"functional={len(result.get('functional', []))} "
+            f"bug_list={len(result.get('bug_list', []))}"
+        )
+        return result
+    except RuntimeError as e:
+        # Ollama không chạy hoặc model chưa có
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        logger.error(f"[TC GENERATE RAG] Error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/generate-from-base-model/save")
+async def save_generated_testcases(
+    req: SaveGeneratedTCsRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Lưu hàng loạt TC đã được AI sinh (sau khi Tester review và chọn).
+    tc_type = 'bug_list' → tự động set test_type = 'regression'
+    """
+    from services.ai_service import get_embedding
+
+    created_ids = []
+    for tc_data in req.testcases:
+        combined = (
+            f"{tc_data.get('title', '')}. "
+            f"{tc_data.get('steps', '')}. "
+            f"Expected: {tc_data.get('expected_result', '')}"
+        )
+        emb = get_embedding(combined)
+
+        new_tc = Testcase(
+            title=tc_data.get("title", ""),
+            description=tc_data.get("ref_bug", "") if req.tc_type == "bug_list" else "",
+            steps=tc_data.get("steps", ""),
+            expected_result=tc_data.get("expected_result", ""),
+            precondition=tc_data.get("precondition", ""),
+            model_id=req.model_id,
+            test_type="regression" if req.tc_type == "bug_list" else "functional",
+            status="draft",
+            embedding=emb if emb else None,
+            created_by=uuid.UUID(current_user["id"])
+        )
+        db.add(new_tc)
+        await db.flush()
+        created_ids.append(str(new_tc.id))
+
+    await db.commit()
+    logger.info(f"[TC SAVE RAG] Saved {len(created_ids)} {req.tc_type} TCs for model={req.model_id}")
+    return {"message": f"Đã lưu {len(created_ids)} testcase", "ids": created_ids}

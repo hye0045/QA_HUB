@@ -88,7 +88,7 @@ async def chat_endpoint(
         history = ChatHistory(
             user_id=uuid.UUID(current_user['id']),
             mode=chat_mode_enum,
-            prompt=req.prompt, # Save original safe prompt in history
+            prompt=safe_prompt,
             response=ai_reply
         )
         db.add(history)

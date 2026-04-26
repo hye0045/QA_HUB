@@ -9,6 +9,7 @@ import logging
 from core.security import get_current_user, require_qa_lead
 from db.database import get_db
 from db.models import DeliveryDocument, DocStatus, UserRole, MentorAssignment
+from services.audit_service import write_audit_log
 
 logger = logging.getLogger("qa_hub.delivery")
 router = APIRouter(prefix="/delivery", tags=["Delivery Workflow"])
@@ -162,8 +163,15 @@ async def lock_document(
         raise HTTPException(status_code=400, detail="Document is already locked")
 
     doc.status = DocStatus.locked
+    
+    await write_audit_log(
+        db, current_user['id'],
+        action="LOCK_DOCUMENT",
+        entity_type="DeliveryDocument",
+        entity_id=doc_id
+    )
+    
     await db.commit()
-    logger.info(f"[DELIVERY] doc={doc_id} LOCKED by qa_lead={current_user['id']}")
     return {"message": "Document locked", "status": "locked"}
 
 
@@ -187,8 +195,14 @@ async def unlock_document(
         raise HTTPException(status_code=400, detail="Document is not locked")
 
     doc.status = DocStatus.draft
-    await db.commit()
-    logger.info(
-        f"[DELIVERY] doc={doc_id} UNLOCKED by qa_lead={current_user['id']} reason='{reason}'"
+    
+    await write_audit_log(
+        db, current_user['id'],
+        action="UNLOCK_DOCUMENT",
+        entity_type="DeliveryDocument",
+        entity_id=doc_id,
+        reason=reason
     )
+    
+    await db.commit()
     return {"message": "Document unlocked", "status": "draft", "reason": reason}

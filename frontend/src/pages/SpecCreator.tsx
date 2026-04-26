@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import api from '../lib/api';
@@ -18,6 +18,15 @@ const SpecCreator: React.FC = () => {
     const [versionNumber, setVersionNumber] = useState(1);
     const [content, setContent] = useState('');
     const [fileName, setFileName] = useState<string | null>(null);
+    const [featureName, setFeatureName] = useState('');
+    const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
+    const [profiles, setProfiles] = useState<{id: string, name: string}[]>([]);
+
+    useEffect(() => {
+        api.get('/defects/profiles')
+            .then(res => setProfiles(res.data))
+            .catch(err => console.error('Error fetching profiles', err));
+    }, []);
 
     // Sheet preview state
     const [sheets, setSheets] = useState<SheetData[]>([]);
@@ -110,6 +119,8 @@ const SpecCreator: React.FC = () => {
                 language,
                 version_number: versionNumber,
                 content,
+                feature_name: featureName || null,
+                model_profile_ids: selectedModelIds
             });
             if (res.data.spec_id) {
                 setSuccess(`✅ Upload thành công! Spec ID: ${res.data.spec_id}`);
@@ -277,6 +288,38 @@ const SpecCreator: React.FC = () => {
                         placeholder="Ví dụ: Module Đăng Nhập Hệ Thống"
                         style={{ width: '100%', padding: '0.75rem', borderRadius: '4px', border: '1px solid #ccc', fontSize: '1rem', boxSizing: 'border-box' }}
                     />
+                </div>
+
+                {/* Feature Name & Models */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
+                    <div>
+                        <label style={{ display: 'block', fontWeight: 'bold', marginBottom: '0.5rem' }}>Feature Name (Nhóm chức năng):</label>
+                        <input
+                            type="text"
+                            value={featureName}
+                            onChange={e => setFeatureName(e.target.value)}
+                            placeholder="Ví dụ: Login, Camera, Wifi..."
+                            style={{ width: '100%', padding: '0.75rem', borderRadius: '4px', border: '1px solid #ccc', fontSize: '1rem', boxSizing: 'border-box' }}
+                        />
+                    </div>
+                    <div>
+                        <label style={{ display: 'block', fontWeight: 'bold', marginBottom: '0.5rem' }}>Dòng máy hỗ trợ (Models):</label>
+                        <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', padding: '0.5rem', border: '1px solid #eee', borderRadius: '4px' }}>
+                            {profiles.map(p => (
+                                <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                                    <input 
+                                        type="checkbox" 
+                                        checked={selectedModelIds.includes(p.id)}
+                                        onChange={e => {
+                                            if (e.target.checked) setSelectedModelIds([...selectedModelIds, p.id]);
+                                            else setSelectedModelIds(selectedModelIds.filter(id => id !== p.id));
+                                        }}
+                                    />
+                                    {p.name}
+                                </label>
+                            ))}
+                        </div>
+                    </div>
                 </div>
 
                 {/* Language & Version */}

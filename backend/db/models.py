@@ -42,6 +42,7 @@ class Specification(Base):
     __tablename__ = "specification"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     title = Column(String, nullable=False)
+    feature_name = Column(String, nullable=True)
     language = Column(String, nullable=False)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
@@ -57,6 +58,12 @@ class SpecVersion(Base):
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     specification = relationship("Specification", back_populates="versions")
+
+    supported_models = relationship(
+        "DeviceModelProfile",
+        secondary="spec_version_model_link",
+        lazy="selectin"
+    )
 
 class Testcase(Base):
     __tablename__ = "testcase"
@@ -80,6 +87,21 @@ testcase_spec_link = Table(
     Column("specification_id", UUID(as_uuid=True), ForeignKey("specification.id", ondelete="CASCADE"), primary_key=True)
 )
 
+spec_version_model_link = Table(
+    "spec_version_model_link", Base.metadata,
+    Column(
+        "spec_version_id",
+        UUID(as_uuid=True),
+        ForeignKey("spec_version.id", ondelete="CASCADE"),
+        primary_key=True
+    ),
+    Column(
+        "model_profile_id",
+        UUID(as_uuid=True),
+        ForeignKey("device_model_profiles.id", ondelete="CASCADE"),
+        primary_key=True
+    )
+)
 class Defect(Base):
     __tablename__ = "defect"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -94,6 +116,7 @@ class Defect(Base):
     bug_category = Column(String, nullable=True)
     root_cause_guess = Column(String, nullable=True)
     module = Column(String, nullable=True)
+    embedding = Column(JSONB, nullable=True)
     
     synced_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
@@ -146,4 +169,15 @@ class DeviceModelProfile(Base):
     name = Column(String, nullable=False, unique=True) # e.g., "iPhone 15 Pro Max"
     project_id = Column(String, nullable=False) # Redmine Project ID (e.g. eb1242)
     tracker_id = Column(Integer, nullable=False, default=38) # e.g. 38 for Bug
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+class AuditLog(Base):
+    """Ghi lại toàn bộ hành động quan trọng: Lock/Unlock, gán Mentor, ủy quyền."""
+    __tablename__ = "audit_log"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    action = Column(String, nullable=False)
+    entity_type = Column(String, nullable=False)
+    entity_id = Column(UUID(as_uuid=True), nullable=True)
+    reason = Column(String, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)

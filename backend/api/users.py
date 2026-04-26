@@ -8,6 +8,7 @@ from typing import List
 from db.database import get_db
 from core.security import require_qa_lead, get_current_user
 from db.models import User, MentorAssignment, UserRole
+from services.audit_service import write_audit_log
 
 router = APIRouter(prefix="/users", tags=["Users & Mentorship"])
 
@@ -58,6 +59,13 @@ async def assign_mentor(req: AssignMentorRequest, db: AsyncSession = Depends(get
     mentor.is_mentor = True
 
     try:
+        await write_audit_log(
+            db, current_user['id'],
+            action="ASSIGN_MENTOR",
+            entity_type="MentorAssignment",
+            entity_id=str(i_id),
+            reason=f"Mentor: {mentor.email}"
+        )
         await db.commit()
     except Exception as e:
         await db.rollback()
@@ -165,5 +173,14 @@ async def create_delegation(req: DelegateRequest, db: AsyncSession = Depends(get
         expires_at=expires
     )
     db.add(delegation)
+    
+    await write_audit_log(
+        db, current_user['id'],
+        action="CREATE_DELEGATION",
+        entity_type="RoleDelegation",
+        entity_id=str(tester_id_uuid),
+        reason=f"Duration: {req.duration_hours}h"
+    )
+    
     await db.commit()
     return {"message": f"Successfully delegated Final Approve to {tester.email} for {req.duration_hours} hours."}
