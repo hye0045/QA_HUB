@@ -163,30 +163,4 @@ Trả về ĐÚNG định dạng JSON sau (không kèm text thừa):
         }
 
 
-async def generate_testcases_from_spec(spec_content: str, base_model_testcases: list) -> dict:
-    """
-    Sử dụng Ollama AI để sinh Testcase JSON Format dựa trên Specs
-    và các base rules truyền vào từ testcases trước đó.
-    """
-    masked_spec = mask_sensitive_data(spec_content)
 
-    # Chuẩn bị context của Base models
-    base_context = ""
-    for tc in base_model_testcases:
-        base_context += f"- Title: {tc.get('title')}\n  Precondition: {tc.get('precondition')}\n  Steps: {tc.get('steps')}\n  Expected: {tc.get('expected')}\n"
-
-    system_prompt = f"""Bạn là Test Automation Engineer Senior của công ty Thundersoft.
-Nhiệm vụ: Viết Testcases chất lượng cao cho Software Specification dưới đây.
-HỌC HỎI văn phong và độ chi tiết từ các Testcase Base Model sau:
-{base_context}
-
-Yêu cầu output BẮT BUỘC trả về ĐÚNG ĐỊNH DẠNG JSON MẢNG OBJECT NHƯ SAU:
-{{"testcases": [ {{"test_id": "1", "title": "Kiem tra chuc nang", "precondition": "Dieu kien", "steps": "Cac buoc...", "expected_result": "Ket qua..."}} ]}}
-KHÔNG output markdown ````json hay bất kỳ chú thích nào khác."""
-
-    try:
-        response = await call_llm(f"SPECIFICATION:\n{masked_spec}", system_prompt=system_prompt)
-        return json.loads(response)
-    except Exception as e:
-        logger.error(f"[AI Service] generate_testcases failed: {e}", exc_info=True)
-        return {"testcases": [{"test_id": "ERR-01", "title": "AI Error", "precondition": "", "steps": str(e), "expected_result": "Failed to generate"}]}

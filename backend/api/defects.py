@@ -90,7 +90,8 @@ async def sync_defects(
             f"Category: {ai_result.get('bug_category', '')}. "
             f"Module: {ai_result.get('module', '')}"
         )
-        defect_embedding = get_embedding(embed_text[:500])
+        from fastapi.concurrency import run_in_threadpool
+        defect_embedding = await run_in_threadpool(get_embedding, embed_text[:500])
         
         # 3. Lưu vào Database
         result = await db.execute(select(Defect).where(Defect.redmine_id == d["redmine_id"]))
@@ -155,19 +156,9 @@ async def get_analytics(
     )
     by_category = [{"category": row[0] or "Uncategorized", "count": row[1]} for row in category_res.all()]
 
-    # [Mock] 5. Defect by Assignee (Giả lập do DB chưa có trường này từ Redmine)
-    import random
-    mock_assignees = [
-        {"name": "Trần Văn Intern", "count": random.randint(5, 15)},
-        {"name": "Lê Thị Tester", "count": random.randint(8, 20)},
-        {"name": "Nguyễn QA Lead", "count": random.randint(1, 5)},
-        {"name": "Unassigned", "count": random.randint(0, 3)}
-    ]
-    
     return {
         "total": total_defects,
         "by_model": by_model,
         "by_status": by_status,
-        "by_category": by_category,
-        "by_assignee": mock_assignees
+        "by_category": by_category
     }

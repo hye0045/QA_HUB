@@ -18,10 +18,17 @@ interface GeneratedTC {
 
 const TestCaseGenerator: React.FC = () => {
     const [specText, setSpecText] = useState('');
+    const [specId, setSpecId] = useState('');
+    const [specVersion, setSpecVersion] = useState<number | ''>('');
+    const [specs, setSpecs] = useState<any[]>([]);
+    
     const [baseModel, setBaseModel] = useState('');
     const [newModel, setNewModel] = useState('');
     const [profiles, setProfiles] = useState<DeviceProfile[]>([]);
     const [generating, setGenerating] = useState(false);
+    
+    const [baseTcFile, setBaseTcFile] = useState<File | null>(null);
+    const [baseTcOverride, setBaseTcOverride] = useState<any[] | null>(null);
     
     const [functionalTCs, setFunctionalTCs] = useState<GeneratedTC[]>([]);
     const [bugListTCs, setBugListTCs] = useState<GeneratedTC[]>([]);
@@ -40,11 +47,33 @@ const TestCaseGenerator: React.FC = () => {
                 }
             })
             .catch(err => console.error('Error fetching profiles:', err));
+            
+        api.get('/specs/')
+            .then(res => setSpecs(res.data))
+            .catch(err => console.error('Error fetching specs:', err));
     }, []);
 
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        setBaseTcFile(file);
+        
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+            const res = await api.post('/testcases/upload-base-for-rag', formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            setBaseTcOverride(res.data.testcases);
+            setSuccessMsg(`✅ Đã load tạm ${res.data.count} TC base model từ file.`);
+        } catch (err: any) {
+            setError(`❌ Lỗi upload file TC: ${err.response?.data?.detail || err.message}`);
+        }
+    };
+
     const handleGenerate = async () => {
-        if (!specText.trim() || !baseModel.trim() || !newModel.trim()) {
-            setError('Vui lòng nhập đầy đủ Spec Text, Base Model và New Model Name.');
+        if ((!specText.trim() && !specId) || !baseModel.trim() || !newModel.trim()) {
+            setError('Vui lòng nhập đầy đủ Spec (Text hoặc chọn từ DB), Base Model và New Model Name.');
             return;
         }
 
@@ -59,8 +88,11 @@ const TestCaseGenerator: React.FC = () => {
                 spec_text: specText,
                 base_model_name: baseModel,
                 new_model_name: newModel,
+                spec_id: specId || null,
+                spec_version: specVersion || null,
                 tc_k: 5,
-                bug_k: 5
+                bug_k: 5,
+                base_tc_override: baseTcOverride
             });
             
             const funcTCs = (res.data.functional || []).map((tc: any) => ({ ...tc, selected: true }));
@@ -189,12 +221,39 @@ const TestCaseGenerator: React.FC = () => {
                 
                 <div style={{ gridColumn: '1 / -1' }}>
                     <label style={{ display: 'block', fontWeight: 'bold', marginBottom: '0.5rem' }}>
-                        Tài liệu Specification (Model Mới):
+                        Tài liệu Specification (Chọn từ DB hoặc Paste text):
                     </label>
+                    <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
+                        <select 
+                            value={specId} 
+                            onChange={e => {
+                                setSpecId(e.target.value);
+                                setSpecVersion(''); // Reset version when spec changes
+                            }}
+                            style={{ flex: 2, padding: '0.75rem', borderRadius: '4px', border: '1px solid #ccc' }}
+                        >
+                            <option value="">-- Hoặc chọn Spec có sẵn trong DB --</option>
+                            {specs.map(s => (
+                                <option key={s.id} value={s.id}>{s.title} (v{s.latest_version})</option>
+                            ))}
+                        </select>
+                        {specId && (
+                            <select 
+                                value={specVersion} 
+                                onChange={e => setSpecVersion(Number(e.target.value) || '')}
+                                style={{ flex: 1, padding: '0.75rem', borderRadius: '4px', border: '1px solid #ccc' }}
+                            >
+                                <option value="">-- Mới nhất --</option>
+                                {specs.find(s => s.id === specId)?.versions?.map((v: any) => (
+                                    <option key={v.version_number} value={v.version_number}>v{v.version_number}</option>
+                                ))}
+                            </select>
+                        )}
+                    </div>
                     <textarea 
                         value={specText}
                         onChange={e => setSpecText(e.target.value)}
-                        placeholder="Paste nội dung Spec của tính năng cần test..."
+                        placeholder="Paste nội dung Spec của tính năng cần test nếu không chọn từ DB..."
                         style={{ width: '100%', height: '120px', padding: '0.75rem', borderRadius: '4px', border: '1px solid #ccc', fontFamily: 'monospace', boxSizing: 'border-box' }}
                     />
                 </div>
@@ -213,6 +272,10 @@ const TestCaseGenerator: React.FC = () => {
                         ))}
                         {profiles.length === 0 && <option value="">Đang tải...</option>}
                     </select>
+                    <div style={{ marginTop: '0.75rem' }}>
+                        <label style={{ display: 'block', fontSize: '0.85rem', color: '#7f8c8d', marginBottom: '0.25rem' }}>Hoặc Upload file Excel TC Base Model (ghi đè DB):</label>
+                        <input type="file" accept=".xlsx,.xls" onChange={handleFileUpload} style={{ fontSize: '0.85rem' }} />
+                    </div>
                 </div>
 
                 <div>

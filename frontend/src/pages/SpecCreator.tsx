@@ -7,6 +7,7 @@ interface SheetData {
     name: string;
     headers: string[];
     rows: string[][];
+    rawText: string;
 }
 
 const SpecCreator: React.FC = () => {
@@ -30,6 +31,7 @@ const SpecCreator: React.FC = () => {
 
     // Sheet preview state
     const [sheets, setSheets] = useState<SheetData[]>([]);
+    const [selectedSheetNames, setSelectedSheetNames] = useState<string[]>([]);
     const [activeSheet, setActiveSheet] = useState(0);
     const [showPreview, setShowPreview] = useState(true);
 
@@ -57,7 +59,7 @@ const SpecCreator: React.FC = () => {
                     const workbook = XLSX.read(bstr, { type: 'binary' });
 
                     const parsedSheets: SheetData[] = [];
-                    let fullContent = '';
+                    const initialSelected: string[] = [];
 
                     workbook.SheetNames.forEach((sheetName, idx) => {
                         const sheet = workbook.Sheets[sheetName];
@@ -74,16 +76,14 @@ const SpecCreator: React.FC = () => {
 
                         const headers = filtered[0] || [];
                         const rows = filtered.slice(1);
-
-                        parsedSheets.push({ name: sheetName, headers, rows });
-
-                        // Tạo text content gửi lên backend
                         const sheetText = XLSX.utils.sheet_to_txt(sheet);
-                        fullContent += `=== Sheet ${idx + 1}: ${sheetName} ===\n${sheetText}\n\n`;
+
+                        parsedSheets.push({ name: sheetName, headers, rows, rawText: sheetText });
+                        initialSelected.push(sheetName);
                     });
 
                     setSheets(parsedSheets);
-                    setContent(fullContent);
+                    setSelectedSheetNames(initialSelected);
                     setShowPreview(true);
 
                     // Tự động đặt title nếu chưa có
@@ -104,7 +104,20 @@ const SpecCreator: React.FC = () => {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
 
-        if (!title.trim() || !content.trim()) {
+        let finalContent = content;
+        if (fileName && sheets.length > 0) {
+            finalContent = sheets
+                .filter(s => selectedSheetNames.includes(s.name))
+                .map(s => `=== Sheet: ${s.name} ===\n${s.rawText}`)
+                .join('\n\n');
+            
+            if (!finalContent.trim()) {
+                setError('Vui lòng chọn ít nhất 1 sheet để upload.');
+                return;
+            }
+        }
+
+        if (!title.trim() || !finalContent.trim()) {
             setError('Title và Content là bắt buộc! Hãy nhập tay hoặc Upload file Excel.');
             return;
         }
@@ -118,7 +131,7 @@ const SpecCreator: React.FC = () => {
                 title,
                 language,
                 version_number: versionNumber,
-                content,
+                content: finalContent,
                 feature_name: featureName || null,
                 model_profile_ids: selectedModelIds
             });
@@ -197,23 +210,31 @@ const SpecCreator: React.FC = () => {
                         {/* Tab header */}
                         <div style={{ display: 'flex', alignItems: 'center', background: '#f8f9fa', borderBottom: '1px solid #dee2e6', flexWrap: 'wrap' }}>
                             {sheets.map((sheet, idx) => (
-                                <button
+                                <div
                                     key={idx}
-                                    type="button"
-                                    onClick={() => setActiveSheet(idx)}
                                     style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
                                         padding: '0.6rem 1.2rem',
-                                        border: 'none',
                                         borderBottom: idx === activeSheet ? '3px solid #3498db' : '3px solid transparent',
                                         background: idx === activeSheet ? 'white' : 'transparent',
-                                        cursor: 'pointer',
                                         fontWeight: idx === activeSheet ? 'bold' : 'normal',
                                         color: idx === activeSheet ? '#3498db' : '#6c757d',
                                         fontSize: '0.9rem',
                                     }}
                                 >
-                                    📋 {sheet.name}
-                                </button>
+                                    <input 
+                                        type="checkbox" 
+                                        checked={selectedSheetNames.includes(sheet.name)}
+                                        onChange={(e) => {
+                                            if (e.target.checked) setSelectedSheetNames([...selectedSheetNames, sheet.name]);
+                                            else setSelectedSheetNames(selectedSheetNames.filter(n => n !== sheet.name));
+                                        }}
+                                        style={{ marginRight: '0.5rem', cursor: 'pointer' }}
+                                        title="Chọn sheet này để upload"
+                                    />
+                                    <span onClick={() => setActiveSheet(idx)} style={{ cursor: 'pointer' }}>📋 {sheet.name}</span>
+                                </div>
                             ))}
                             <button
                                 type="button"

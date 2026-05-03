@@ -122,6 +122,14 @@ async def approve_by_lead(
         raise HTTPException(status_code=403, detail="Only QA Leads or Admins can lock documents")
         
     doc.status = DocStatus.locked
+    
+    await write_audit_log(
+        db, current_user['id'],
+        action="APPROVE_AND_LOCK_DOCUMENT",
+        entity_type="DeliveryDocument",
+        entity_id=doc_id
+    )
+    
     await db.commit()
     return {"message": "Document Approved and Locked", "status": doc.status.value}
 

@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import api, { Spec } from '../lib/api';
+import api, { SpecExtended, SpecVersionInfo } from '../lib/api';
 
 const SpecViewer: React.FC = () => {
     const { id } = useParams<{ id: string }>();
-    const [spec, setSpec] = useState<Spec | null>(null);
+    const [spec, setSpec] = useState<SpecExtended | null>(null);
     const [loading, setLoading] = useState(true);
     const [translating, setTranslating] = useState(false);
     const [activeSheetIdx, setActiveSheetIdx] = useState(0);
@@ -21,13 +21,10 @@ const SpecViewer: React.FC = () => {
         const fetchSpec = async () => {
             try {
                 const res = await api.get(`/specs/`);
-                const target: Spec = res.data.find((s: Spec) => s.id === id);
+                const target: SpecExtended = res.data.find((s: SpecExtended) => s.id === id);
                 if (target) {
                     setSpec(target);
-                    const versionNums = Array.from(
-                        { length: target.latest_version },
-                        (_, i) => i + 1
-                    );
+                    const versionNums = target.versions.map(v => v.version_number).sort((a,b) => b-a);
                     setVersions(versionNums);
                     setSelectedVersion(target.latest_version);
                     setDiffV1(Math.max(1, target.latest_version - 1));
@@ -118,10 +115,16 @@ const SpecViewer: React.FC = () => {
         <div>
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
-                <h2 style={{ margin: 0 }}>
-                    {spec.title}{' '}
-                    <span style={{ fontSize: '1rem', color: '#7f8c8d' }}>(v{selectedVersion})</span>
-                </h2>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    <h2 style={{ margin: 0 }}>
+                        {spec.title}{' '}
+                        <span style={{ fontSize: '1rem', color: '#7f8c8d' }}>(v{selectedVersion})</span>
+                    </h2>
+                    <div style={{ fontSize: '0.9rem', color: '#34495e' }}>
+                        <strong>Feature:</strong> {spec.feature_name} | <strong>Models Hỗ Trợ:</strong>{' '}
+                        {spec.versions.find(v => v.version_number === selectedVersion)?.supported_models.map(m => m.name).join(', ') || 'N/A'}
+                    </div>
+                </div>
 
                 <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
                     <button

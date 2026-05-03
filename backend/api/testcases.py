@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from pydantic import BaseModel
@@ -46,13 +46,14 @@ async def create_testcase(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
+    from fastapi.concurrency import run_in_threadpool
     from services.ai_service import get_embedding
 
     combined_content = (
         f"{tc.title}. {tc.description or ''}. "
         f"Steps: {tc.steps or ''}. Expected: {tc.expected_result or ''}"
     )
-    embedding_vector = get_embedding(combined_content)
+    embedding_vector = await run_in_threadpool(get_embedding, combined_content)
 
     new_tc = Testcase(
         title=tc.title,
@@ -97,12 +98,13 @@ async def update_testcase(
     existing_tc.precondition = tc.precondition
     existing_tc.is_affected = False  # Reset khi user tự sửa
 
+    from fastapi.concurrency import run_in_threadpool
     from services.ai_service import get_embedding
     combined_content = (
         f"{tc.title}. {tc.description or ''}. "
         f"Steps: {tc.steps or ''}. Expected: {tc.expected_result or ''}"
     )
-    existing_tc.embedding = get_embedding(combined_content) or None
+    existing_tc.embedding = await run_in_threadpool(get_embedding, combined_content) or None
 
     await db.commit()
     logger.info(f"[TESTCASE] UPDATED id={tc_id} by={current_user['id']}")
@@ -201,23 +203,64 @@ async def suggest_testcase(
     }
 
 
-class GenerateTestcaseRequest(BaseModel):
-    spec_text: str
-    base_model: str
-
-
 class RagGenerateRequest(BaseModel):
     spec_text: str               # Spec của dòng máy mới (paste text hoặc lấy từ SpecVersion)
     base_model_name: str         # Tên dòng máy gốc (VD: "Samsung S24")
     new_model_name: str          # Tên dòng máy mới cần sinh TC (VD: "Samsung S25")
     spec_id: Optional[str] = None  # Nếu có, tự lấy content từ SpecVersion mới nhất
+    spec_version: Optional[int] = None
     tc_k: int = 5
     bug_k: int = 5
+    base_tc_override: Optional[List[dict]] = None
 
 class SaveGeneratedTCsRequest(BaseModel):
     model_id: str
     tc_type: str = "functional"
     testcases: List[dict]
+
+
+@router.post("/upload-base-for-rag")
+async def upload_base_testcases_for_rag(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Upload file Excel làm TC Base Model tạm thời (không lưu vào DB).
+    Trả về list TC để dùng ngay trong RAG generation.
+    Dùng khi base model chưa có TC trong DB.
+    """
+    import openpyxl, io
+
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Chỉ hỗ trợ .xlsx/.xls")
+
+    contents = await file.read()
+    wb = openpyxl.load_workbook(filename=io.BytesIO(contents), read_only=True, data_only=True)
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))
+
+    if not rows:
+        raise HTTPException(status_code=400, detail="File trống")
+
+    headers = [str(h).strip().lower() if h else "" for h in rows[0]]
+    if "title" not in headers:
+        raise HTTPException(status_code=400, detail=f"Thiếu cột 'title'. Cột hiện có: {headers}")
+
+    tcs = []
+    for row in rows[1:]:
+        row_dict = {headers[i]: row[i] for i in range(min(len(headers), len(row)))}
+        title = str(row_dict.get("title") or "").strip()
+        if not title:
+            continue
+        tcs.append({
+            "title": title,
+            "precondition": str(row_dict.get("precondition") or ""),
+            "steps": str(row_dict.get("steps") or ""),
+            "expected_result": str(row_dict.get("expected_result") or ""),
+        })
+
+    return {"testcases": tcs, "count": len(tcs)}
 
 
 @router.post("/generate-from-base-model")
@@ -247,12 +290,13 @@ async def generate_testcases_from_base_model(
     if req.spec_id and not spec_text.strip():
         try:
             spec_uuid = uuid.UUID(req.spec_id)
-            ver_res = await db.execute(
-                select(SpecVersion)
-                .where(SpecVersion.specification_id == spec_uuid)
-                .order_by(SpecVersion.version_number.desc())
-                .limit(1)
-            )
+            stmt = select(SpecVersion).where(SpecVersion.specification_id == spec_uuid)
+            if req.spec_version:
+                stmt = stmt.where(SpecVersion.version_number == req.spec_version)
+            else:
+                stmt = stmt.order_by(SpecVersion.version_number.desc()).limit(1)
+                
+            ver_res = await db.execute(stmt)
             ver = ver_res.scalars().first()
             if ver:
                 spec_text = ver.content
@@ -273,6 +317,7 @@ async def generate_testcases_from_base_model(
             new_model_name=req.new_model_name,
             tc_k=req.tc_k,
             bug_k=req.bug_k,
+            base_tc_override=req.base_tc_override,
         )
         logger.info(
             f"[TC GENERATE RAG] user={current_user['id']} "
@@ -299,6 +344,7 @@ async def save_generated_testcases(
     Lưu hàng loạt TC đã được AI sinh (sau khi Tester review và chọn).
     tc_type = 'bug_list' → tự động set test_type = 'regression'
     """
+    from fastapi.concurrency import run_in_threadpool
     from services.ai_service import get_embedding
 
     created_ids = []
@@ -308,7 +354,7 @@ async def save_generated_testcases(
             f"{tc_data.get('steps', '')}. "
             f"Expected: {tc_data.get('expected_result', '')}"
         )
-        emb = get_embedding(combined)
+        emb = await run_in_threadpool(get_embedding, combined)
 
         new_tc = Testcase(
             title=tc_data.get("title", ""),

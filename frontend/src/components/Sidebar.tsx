@@ -24,6 +24,8 @@ const Sidebar: React.FC = () => {
                     <>
                         <Link to="/specs/new" style={{ color: '#ecf0f1', textDecoration: 'none' }}>+ Upload Specification</Link>
                         <Link to="/specs/diff" style={{ color: '#ecf0f1', textDecoration: 'none' }}>Spec Diff Viewer</Link>
+                        <Link to="/testcases" style={{ color: '#ecf0f1', textDecoration: 'none' }}>Danh sách Testcase</Link>
+                        <Link to="/testcases/upload" style={{ color: '#ecf0f1', textDecoration: 'none' }}>Upload Testcase (Excel)</Link>
                         <Link to="/testcases/generate" style={{ color: '#ecf0f1', textDecoration: 'none' }}>AI Testcase Generator</Link>
                     </>
                 )}

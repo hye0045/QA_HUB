@@ -70,10 +70,6 @@ async def chat_endpoint(
         system_msg = "You are a helpful AI assistant."
         user_msg = safe_prompt
 
-    messages = [
-        {"role": "system", "content": system_msg},
-        {"role": "user", "content": user_msg}
-    ]
 
     try:
         # 4. Call Ollama LLM

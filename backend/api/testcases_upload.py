@@ -53,30 +53,70 @@ async def upload_testcases_excel(
         logger.error(f"[TC UPLOAD] Lỗi đọc file Excel: {e}")
         raise HTTPException(status_code=400, detail=f"Không thể đọc file Excel: {str(e)}")
 
-    # 3. Đọc headers từ dòng đầu tiên
+    # 3. Quét tối đa 20 dòng đầu để tìm dòng header (hỗ trợ file Nhật)
     rows = list(ws.iter_rows(values_only=True))
     if not rows:
         raise HTTPException(status_code=400, detail="File Excel trống")
 
-    raw_headers = rows[0]
-    headers = [str(h).strip().lower() if h is not None else "" for h in raw_headers]
+    header_row_index = -1
+    mapped_headers = []
+    
+    title_keywords = ["title", "確認項目", "テスト項目", "項目", "大項目", "小項目", "中項目", "tc_title", "test case"]
+    desc_keywords = ["description", "詳細", "目的", "概要", "desc"]
+    steps_keywords = ["steps", "手順", "操作手順", "テスト手順", "step"]
+    expected_keywords = ["expected_result", "期待値", "期待される結果", "判定基準", "expected"]
+    precondition_keywords = ["precondition", "前提条件", "事前準備"]
+    type_keywords = ["test_type", "種別", "テスト種別", "type"]
 
-    if "title" not in headers:
+    for idx, row in enumerate(rows[:20]):
+        row_strs = [str(h).strip().lower() if h is not None else "" for h in row]
+        temp_mapped = []
+        has_title = False
+        
+        for h in row_strs:
+            if any(k in h for k in title_keywords) and not has_title:
+                temp_mapped.append("title")
+                has_title = True
+            elif any(k in h for k in desc_keywords):
+                temp_mapped.append("description")
+            elif any(k in h for k in steps_keywords):
+                temp_mapped.append("steps")
+            elif any(k in h for k in expected_keywords):
+                temp_mapped.append("expected_result")
+            elif any(k in h for k in precondition_keywords):
+                temp_mapped.append("precondition")
+            elif any(k in h for k in type_keywords):
+                temp_mapped.append("test_type")
+            else:
+                temp_mapped.append(h)
+                
+        if "title" in temp_mapped:
+            header_row_index = idx
+            mapped_headers = temp_mapped
+            break
+
+    if header_row_index == -1:
+        sample_row = []
+        for r in rows[:10]:
+            if any(r):
+                sample_row = [str(x) for x in r if x is not None]
+                break
         raise HTTPException(
             status_code=400,
-            detail=f"File Excel phải có cột 'title'. Các cột tìm thấy: {headers}"
+            detail=f"Không tìm thấy cột 'title' hoặc '確認項目' trong 20 dòng đầu tiên. Dữ liệu mẫu tìm thấy: {sample_row}"
         )
 
     # 4. Tạo testcase cho từng dòng
     created = 0
     skipped = 0
-    for row in rows[1:]:
-        row_dict = {headers[i]: row[i] for i in range(min(len(headers), len(row)))}
+    for row in rows[header_row_index + 1:]:
+        row_dict = {mapped_headers[i]: row[i] for i in range(min(len(mapped_headers), len(row)))}
         title = str(row_dict.get("title", "")).strip()
         if not title:
             skipped += 1
             continue
 
+        from fastapi.concurrency import run_in_threadpool
         from services.ai_service import get_embedding
 
         combined_text = (
@@ -85,7 +125,7 @@ async def upload_testcases_excel(
             f"Steps: {str(row_dict.get('steps') or '')}. "
             f"Expected: {str(row_dict.get('expected_result') or '')}"
         )
-        embedding_vector = get_embedding(combined_text)
+        embedding_vector = await run_in_threadpool(get_embedding, combined_text)
 
         tc = Testcase(
             title=title,
@@ -101,6 +141,9 @@ async def upload_testcases_excel(
         )
         db.add(tc)
         created += 1
+
+        if created % 50 == 0:
+            await db.flush()
 
     try:
         await db.commit()

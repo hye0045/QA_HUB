@@ -9,6 +9,7 @@ import json
 import logging
 from typing import List, Dict, Any
 
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
@@ -45,7 +46,7 @@ async def retrieve_similar_testcases(
     threshold: float = 0.25
 ) -> List[str]:
     """Luồng A: Lấy TC của base_model gần nhất với spec_text mới."""
-    query_vec = get_embedding(spec_text[:2000])
+    query_vec = await run_in_threadpool(get_embedding, spec_text[:2000])
     if not query_vec:
         return []
 
@@ -80,7 +81,7 @@ async def retrieve_similar_defects(
     threshold: float = 0.20
 ) -> List[str]:
     """Luồng B: Lấy Defect của base_model liên quan đến spec_text."""
-    query_vec = get_embedding(spec_text[:2000])
+    query_vec = await run_in_threadpool(get_embedding, spec_text[:2000])
     if not query_vec:
         return []
 
@@ -105,7 +106,7 @@ async def retrieve_similar_defects(
         candidates = []
         for d in defects:
             embed_text = f"{d.title}. {d.cleaned_description or ''}. Module: {d.module or ''}"
-            emb = get_embedding(embed_text[:500])
+            emb = await run_in_threadpool(get_embedding, embed_text[:500])
             if emb:
                 candidates.append({
                     "embedding": emb,
@@ -178,10 +179,19 @@ async def generate_testcases_rag(
     new_model_name: str,
     tc_k: int = 5,
     bug_k: int = 5,
+    base_tc_override: list = None,
 ) -> Dict[str, Any]:
     safe_spec = mask_sensitive_data(spec_text)
 
-    similar_tcs = await retrieve_similar_testcases(db, safe_spec, base_model_name, k=tc_k)
+    # Nếu có TC override từ file upload, dùng luôn thay vì query DB
+    if base_tc_override:
+        similar_tcs = [
+            f"Title: {tc.get('title')}\nPrecondition: {tc.get('precondition','')}\n"
+            f"Steps: {tc.get('steps','')}\nExpected: {tc.get('expected_result','')}"
+            for tc in base_tc_override[:tc_k]
+        ]
+    else:
+        similar_tcs = await retrieve_similar_testcases(db, safe_spec, base_model_name, k=tc_k)
     similar_bugs = await retrieve_similar_defects(db, safe_spec, base_model_name, k=bug_k)
 
     logger.info(f"[RAG] base={base_model_name}→{new_model_name} tcs={len(similar_tcs)} bugs={len(similar_bugs)}")

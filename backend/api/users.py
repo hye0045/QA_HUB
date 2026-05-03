@@ -17,7 +17,11 @@ class AssignMentorRequest(BaseModel):
     intern_id: str
 
 @router.post("/assign-mentor", dependencies=[Depends(require_qa_lead)])
-async def assign_mentor(req: AssignMentorRequest, db: AsyncSession = Depends(get_db)):
+async def assign_mentor(
+    req: AssignMentorRequest, 
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
     """
     [UC_F2] QA Lead gán quyền mentor cho Tester/QA Lead để kèm cặp một Intern.
     """

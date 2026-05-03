@@ -29,7 +29,7 @@ api.interceptors.request.use(
 api.interceptors.response.use(
     (response) => response,
     (error) => {
-        if (error.response?.status === 401) {
+        if (error.response?.status === 401 && !error.config?.url?.includes('/auth/login')) {
             // Token hết hạn hoặc không hợp lệ – xóa session và redirect
             localStorage.clear();
             window.location.href = '/login?reason=session_expired';
@@ -47,6 +47,17 @@ export interface Spec {
     language: string;
     latest_version: number;
     content: string;
+}
+
+export interface SpecVersionInfo {
+    version_number: number;
+    created_at: string;
+    supported_models: { id: string; name: string }[];
+}
+
+export interface SpecExtended extends Spec {
+    feature_name: string;
+    versions: SpecVersionInfo[];
 }
 
 export interface Defect {

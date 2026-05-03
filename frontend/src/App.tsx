@@ -11,16 +11,11 @@ import SpecViewer from './pages/SpecViewer';
 import UserManagement from './pages/UserManagement';
 import Sidebar from './components/Sidebar';
 import RoleRoute from './components/RoleRoute';
+import TestCaseList from './pages/TestCaseList';
+import TestCaseUpload from './pages/TestCaseUpload';
 
 function App() {
-    const [sessionToken, setSessionToken] = useState<string | null>(null);
-
-    useEffect(() => {
-        const token = localStorage.getItem('token');
-        if (token) {
-            setSessionToken(token);
-        }
-    }, []);
+    const [sessionToken, setSessionToken] = useState<string | null>(() => localStorage.getItem('token'));
 
     return (
         <Router>
@@ -41,6 +36,8 @@ function App() {
                                     <Route element={<RoleRoute allowedRoles={['admin', 'qa_lead', 'tester']} />}>
                                         <Route path="/specs/new" element={<SpecCreator />} />
                                         <Route path="/specs/diff" element={<SpecDiffViewer />} />
+                                        <Route path="/testcases" element={<TestCaseList />} />
+                                        <Route path="/testcases/upload" element={<TestCaseUpload />} />
                                         <Route path="/testcases/generate" element={<TestCaseGenerator />} />
                                     </Route>
 

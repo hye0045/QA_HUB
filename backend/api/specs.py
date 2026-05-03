@@ -10,7 +10,10 @@ import logging
 
 from core.security import get_current_user
 from db.database import get_db
-from db.models import Specification, SpecVersion, Testcase, testcase_spec_link
+from db.models import (
+    Specification, SpecVersion, Testcase,
+    testcase_spec_link, spec_version_model_link, DeviceModelProfile
+)
 
 logger = logging.getLogger("qa_hub.specs")
 router = APIRouter(prefix="/specs", tags=["Specifications"])
@@ -46,7 +49,6 @@ async def list_specs(
         versions_info = []
         for ver in versions:
             # Lấy danh sách models của version này
-            from db.models import spec_version_model_link, DeviceModelProfile
             model_res = await db.execute(
                 select(DeviceModelProfile)
                 .join(
@@ -144,7 +146,6 @@ async def sync_spec(
         await db.flush()
 
         if spec.model_profile_ids:
-            from db.models import spec_version_model_link, DeviceModelProfile
             for profile_id_str in spec.model_profile_ids:
                 try:
                     profile_uuid = uuid.UUID(profile_id_str)
@@ -195,8 +196,6 @@ async def get_specs_by_feature(
 
     data = []
     for s in specs:
-        from db.models import spec_version_model_link, DeviceModelProfile
-
         ver_res = await db.execute(
             select(SpecVersion)
             .where(SpecVersion.specification_id == s.id)
@@ -251,7 +250,6 @@ async def cross_model_diff(
         ver = ver_res.scalars().first()
         if not ver:
             return None, None
-        from db.models import spec_version_model_link, DeviceModelProfile
         model_res = await db.execute(
             select(DeviceModelProfile)
             .join(spec_version_model_link,
@@ -279,6 +277,50 @@ async def cross_model_diff(
         "source": {"spec_id": spec_id_a, "version": version_a, "models": models_a},
         "target": {"spec_id": spec_id_b, "version": version_b, "models": models_b}
     }
+
+
+@router.get("/by-model/{model_name}")
+async def get_specs_by_model(
+    model_name: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Lấy tất cả Spec versions thuộc về một dòng máy cụ thể.
+    Dùng trong TestCaseGenerator để chọn Spec làm input.
+    """
+    prof_res = await db.execute(
+        select(DeviceModelProfile).where(DeviceModelProfile.name == model_name)
+    )
+    profile = prof_res.scalars().first()
+    if not profile:
+        return []
+
+    ver_res = await db.execute(
+        select(SpecVersion)
+        .join(spec_version_model_link,
+              spec_version_model_link.c.spec_version_id == SpecVersion.id)
+        .where(spec_version_model_link.c.model_profile_id == profile.id)
+        .order_by(SpecVersion.created_at.desc())
+    )
+    versions = ver_res.scalars().all()
+
+    result = []
+    for ver in versions:
+        spec_res = await db.execute(
+            select(Specification).where(Specification.id == ver.specification_id)
+        )
+        spec = spec_res.scalars().first()
+        if spec:
+            result.append({
+                "spec_id": str(spec.id),
+                "spec_title": spec.title,
+                "feature_name": spec.feature_name or spec.title,
+                "version_number": ver.version_number,
+                "version_id": str(ver.id),
+                "content_preview": ver.content[:200] + "..." if len(ver.content) > 200 else ver.content
+            })
+    return result
 
 
 @router.get("/{spec_id}/diff")
